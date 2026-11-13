@@ -80,6 +80,7 @@ bash /opt/apibox/install.sh --project sub2api --port auto --no-domain --yes --dr
 |---|---|---|---|---|
 | `sub2api` | Sub2API | `8080` | 多账号 AI 接口聚合反代网关（Claude / OpenAI / Gemini） | [weishaw/sub2api](https://github.com/weishaw/sub2api) |
 | `newapi` | New API | `3000` | 新一代大模型接口管理与分发系统 | [QuantumNous/new-api](https://github.com/QuantumNous/new-api) |
+| `magpie` | Magpie | `3425` | 统一 AI Agent 模型网关（多账号自动切换与 Web 管理） | [yetone/magpie](https://github.com/yetone/magpie) |
 
 ---
 
