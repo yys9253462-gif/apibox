@@ -190,6 +190,9 @@ base_project_install() {
     fi
     if ! out="$(compose_cmd "$compose_file" up -d 2>&1)"; then
       handle_container_failure "$PROJ_CONTAINER_NAME" "$compose_file" "$out"
+      # 只把编排文件改回去不够。已经按失败配置拉起的容器还占着端口和容器名，
+      # 这里停掉，下次重跑才不会撞上这次留下的容器。
+      compose_cmd "$compose_file" down >/dev/null 2>&1 || true
       if [ -n "$compose_bak" ] && [ -f "$compose_bak" ]; then
         mv "$compose_bak" "$compose_file"
       elif [ ! -f "$(base_conf_file)" ]; then
@@ -200,6 +203,7 @@ base_project_install() {
     local ready_timeout="${PROJ_READY_TIMEOUT:-45}"
     if ! wait_container_ready "$PROJ_CONTAINER_NAME" "$target_port" "$ready_timeout"; then
       handle_container_failure "$PROJ_CONTAINER_NAME" "$compose_file" "容器启动后端口探活超时"
+      compose_cmd "$compose_file" down >/dev/null 2>&1 || true
       if [ -n "$compose_bak" ] && [ -f "$compose_bak" ]; then
         mv "$compose_bak" "$compose_file"
       elif [ ! -f "$(base_conf_file)" ]; then

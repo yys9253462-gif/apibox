@@ -267,10 +267,14 @@ reload_self_caddy() {
   open_firewall_port 443
 
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CADDY_CONTAINER_NAME"; then
-    docker exec "$CADDY_CONTAINER_NAME" caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || \
-      compose_cmd "$compose_file" up -d --force-recreate
-  else
-    compose_cmd "$compose_file" up -d
+    if ! docker exec "$CADDY_CONTAINER_NAME" caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 \
+       && ! compose_cmd "$compose_file" up -d --force-recreate; then
+      log_err "内置反向代理重载失败，新的站点配置还没有生效。"
+      return 1
+    fi
+  elif ! compose_cmd "$compose_file" up -d; then
+    log_err "内置反向代理启动失败。"
+    return 1
   fi
   log_ok "内置反向代理（Caddy）已启动并完成配置重载。"
 }
@@ -486,7 +490,11 @@ remove_domain_ssl() {
       log_ok "已清理 [${project_id}] 反代配置，并自动回收闲置的内置 Caddy 容器以释放 80/443 端口。"
     else
       if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CADDY_CONTAINER_NAME"; then
-        docker exec "$CADDY_CONTAINER_NAME" caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true
+        if ! docker exec "$CADDY_CONTAINER_NAME" caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1; then
+          log_warn "反代配置已从文件中删除，但 Caddy 重载失败，线上还在使用旧配置。"
+          log_warn "可手动执行: docker exec ${CADDY_CONTAINER_NAME} caddy reload --config /etc/caddy/Caddyfile"
+          return 1
+        fi
       fi
       log_ok "已清理内置 Caddy 中 [${project_id}] 的域名反代配置。"
     fi
@@ -494,9 +502,15 @@ remove_domain_ssl() {
 
   local host_cfg="/etc/caddy/Caddyfile"
   if [ -f "$host_cfg" ] && grep -q "# >>> vps-proxy:${project_id} >>>" "$host_cfg" 2>/dev/null; then
-    cp "$host_cfg" "${host_cfg}.bak-$(date +%Y%m%d-%H%M%S)-rm-${project_id}"
+    local host_bak="${host_cfg}.bak-$(date +%Y%m%d-%H%M%S)-rm-${project_id}"
+    cp "$host_cfg" "$host_bak"
     strip_caddy_block "$host_cfg" "$project_id"
-    caddy validate --config "$host_cfg" >/dev/null 2>&1 && caddy reload --config "$host_cfg" >/dev/null 2>&1 || true
+    if ! caddy validate --config "$host_cfg" >/dev/null 2>&1 || ! caddy reload --config "$host_cfg" >/dev/null 2>&1; then
+      cp "$host_bak" "$host_cfg"
+      caddy reload --config "$host_cfg" >/dev/null 2>&1 || true
+      log_err "宿主机 Caddy 重载失败，已恢复 [${project_id}] 的原有反代配置。"
+      return 1
+    fi
     log_ok "已清理宿主机 Caddyfile 中 [${project_id}] 的域名反代配置。"
   fi
 }

@@ -699,6 +699,36 @@ else
   fail "gen_secret 仍无条件信任 openssl 的输出"
 fi
 
+# 48. 安装失败后会停掉已拉起的容器，不只是把编排文件改回去
+fail_cleanups="$(grep -c 'compose_cmd "$compose_file" down >/dev/null 2>&1 || true' "${ROOT_DIR}/lib/project_base.sh")"
+if [ "$fail_cleanups" -ge 2 ]; then
+  ok "安装失败与探活超时都会停掉已拉起的容器"
+else
+  fail "安装失败后只恢复了编排文件，容器仍留在原地"
+fi
+
+# 49. 内置反代重载失败会返回失败，不再继续报成功
+if grep -q '内置反向代理重载失败' "${ROOT_DIR}/lib/ssl.sh" \
+   && grep -q '内置反向代理启动失败' "${ROOT_DIR}/lib/ssl.sh"; then
+  ok "内置反代重载或启动失败时会返回失败"
+else
+  fail "内置反代重载失败仍被当成成功"
+fi
+
+# 50. 摘掉一个站点后重载失败会告诉用户，线上不会静默留着旧站点
+if grep -q '线上还在使用旧配置' "${ROOT_DIR}/lib/ssl.sh"; then
+  ok "摘除站点后重载失败会提示线上仍在使用旧配置"
+else
+  fail "摘除站点后重载失败仍被忽略"
+fi
+
+# 51. 宿主机 Caddy 重载失败会恢复刚删掉的站点
+if grep -q '已恢复 \[${project_id}\] 的原有反代配置' "${ROOT_DIR}/lib/ssl.sh"; then
+  ok "宿主机 Caddy 重载失败会恢复原有反代配置"
+else
+  fail "宿主机 Caddy 重载失败后站点已被删掉且没有恢复"
+fi
+
 # 35. 证书探测按 curl 退出码判断，不把失败输出 000000 当成签发成功
 if grep -q 'code="${code:0:3}"' "${ROOT_DIR}/lib/ssl.sh" \
    && ! grep -q "|| echo '000'" "${ROOT_DIR}/lib/ssl.sh"; then
