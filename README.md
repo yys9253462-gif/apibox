@@ -78,7 +78,7 @@ bash /opt/apibox/install.sh --project sub2api --port auto --no-domain --yes --dr
 
 | 项目 ID | 名称 | 默认端口 | 说明 | 开源仓库 |
 |---|---|---|---|---|
-| `sub2api` | Sub2API | `8080` | 多账号 AI 接口聚合反代网关（Claude / OpenAI / Gemini） | [weishaw/sub2api](https://github.com/weishaw/sub2api) |
+| `sub2api` | Sub2API | `8080` | 多账号 AI 接口聚合反代网关（Claude / OpenAI / Gemini，附带 PostgreSQL 与 Redis） | [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api) |
 | `newapi` | New API | `3000` | 新一代大模型接口管理与分发系统 | [QuantumNous/new-api](https://github.com/QuantumNous/new-api) |
 | `magpie` | Magpie | `3425` | 统一 AI Agent 模型网关（多账号自动切换与 Web 管理） | [yetone/magpie](https://github.com/yetone/magpie) |
 | `agent2api` | Agent2API | `3065` | 一体化 AI Agent 网关与管理面板（OpenAI 兼容 /v1 接口 + 多渠道聚合） | [aimod-cc/agent2api](https://github.com/aimod-cc/agent2api) |
@@ -97,10 +97,13 @@ apibox/
 │   ├── common.sh           # 日志、颜色、安全交互、白名单配置读写
 │   ├── system.sh           # 系统/资源检测、公网IP、依赖安装、端口与防火墙
 │   ├── docker.sh           # Docker/Compose 自动安装、服务启动与异常分型诊断
-│   └── ssl.sh              # 反向代理管理与 Let's Encrypt 证书自动申请/续期
+│   ├── ssl.sh              # 反向代理管理与 Let's Encrypt 证书自动申请/续期
+│   └── project_base.sh     # 各项目共用的安装、升级、重启与卸载流程
 ├── projects/               # 各项目独立安装脚本
-│   ├── sub2api.sh          # Sub2API 安装与运维脚本
+│   ├── sub2api.sh          # Sub2API（应用 + PostgreSQL + Redis）
 │   ├── newapi.sh           # New API 安装与运维脚本
+│   ├── magpie.sh           # Magpie 安装与运维脚本
+│   ├── agent2api.sh        # Agent2API 安装与运维脚本
 │   └── _template.sh        # 新增项目标准模板
 ├── tests/
 │   └── verify.sh           # 自动化自检与回归测试套件
@@ -110,7 +113,7 @@ apibox/
 所有部署后的服务数据、密钥与证书统一集中存放在 `/opt/vps-proxy/`：
 
 - `/opt/vps-proxy/caddy/`：内置 Caddy 配置与 Let's Encrypt 证书存储目录
-- `/opt/vps-proxy/<项目ID>/`：各项目的 `docker-compose.yml`、`.env`（权限 600）、`.install.conf` 与持久化 `data/` 目录
+- `/opt/vps-proxy/<项目ID>/`：各项目的 `docker-compose.yml`、`.env`（权限 600）、`.install.conf` 与持久化 `data/` 目录。Sub2API 另有 `postgres/` 与 `redis/`，数据库和缓存不对外开放端口
 
 ---
 

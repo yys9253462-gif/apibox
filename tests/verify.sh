@@ -202,11 +202,16 @@ if (
   DRY_RUN=0
   project_write_env "$tmp_sub_dir" "18088" 2>/dev/null
   grep -qx "HOST_PORT=18088" "${tmp_sub_dir}/.env" &&
-  grep -qx "JWT_SECRET=keep_this_secret_123" "${tmp_sub_dir}/.env"
+  grep -qx "SERVER_PORT=18088" "${tmp_sub_dir}/.env" &&
+  grep -qx "JWT_SECRET=keep_this_secret_123" "${tmp_sub_dir}/.env" &&
+  grep -qx "ADMIN_PASSWORD=keep_pass" "${tmp_sub_dir}/.env" &&
+  grep -q '^POSTGRES_PASSWORD=.' "${tmp_sub_dir}/.env" &&
+  grep -q '^REDIS_PASSWORD=.' "${tmp_sub_dir}/.env" &&
+  grep -qx "AUTO_SETUP=true" "${tmp_sub_dir}/.env"
 ); then
-  ok "sub2api 重配端口时同步更新 HOST_PORT 且保留原密钥"
+  ok "sub2api 重配端口时同步 SERVER_PORT 与 HOST_PORT，保留原密钥并补齐数据库项"
 else
-  fail "sub2api 重配端口未同步 HOST_PORT 或破坏了原密钥"
+  fail "sub2api 重配端口未同步端口、破坏了原密钥，或未补齐数据库项"
 fi
 rm -rf "$tmp_sub_dir"
 
@@ -373,10 +378,10 @@ rm -f "$tmp_img_c" "${tmp_img_c}.out"
 # 23. 日志超过 5MB 自动截断轮转测试
 tmp_big_log="$(mktemp)"
 python_cmd="$(command -v python3 || command -v python)"
-"$python_cmd" -c "
-with open(r'$tmp_big_log', 'wb') as f:
-    line = b'x' * 5999 + b'\n'
-    f.write(line * 1100)
+TMPF="$tmp_big_log" "$python_cmd" -c "
+import os
+with open(os.environ['TMPF'], 'wb') as f:
+    f.write((b'x' * 5999 + b'\n') * 1100)
 "
 if (
   INSTALLER_LOG="$tmp_big_log"
@@ -403,6 +408,34 @@ if (
 else
   fail "get_public_ip 失败探测缓存未按预期工作"
 fi
+
+# 25. Sub2API 编排必须带上 PostgreSQL、Redis，且不把密钥写进 compose
+tmp_compose_dir="$(mktemp -d)"
+if (
+  source "${ROOT_DIR}/lib/common.sh"
+  source "${ROOT_DIR}/projects/sub2api.sh"
+  DRY_RUN=0
+  PROXY_NET_NAME="vps_proxy_net"
+  project_write_env "$tmp_compose_dir" "18088"
+  project_write_compose "$tmp_compose_dir" "18088" "weishaw/sub2api:v9"
+  compose="${tmp_compose_dir}/docker-compose.yml"
+  envf="${tmp_compose_dir}/.env"
+  grep -q 'container_name: vps-proxy-sub2api-postgres' "$compose" &&
+  grep -q 'container_name: vps-proxy-sub2api-redis' "$compose" &&
+  grep -q 'image: weishaw/sub2api:v9' "$compose" &&
+  grep -q '"18088:8080"' "$compose" &&
+  grep -q 'service_healthy' "$compose" &&
+  grep -q 'PGDATA: /var/lib/postgresql/data' "$compose" &&
+  grep -Fq '${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}' "$compose" &&
+  secret="$(grep '^POSTGRES_PASSWORD=' "$envf" | cut -d= -f2-)" &&
+  [ -n "$secret" ] &&
+  ! grep -Fq "$secret" "$compose"
+); then
+  ok "sub2api 编排包含 PostgreSQL 与 Redis，密钥只留在 .env"
+else
+  fail "sub2api 编排缺少数据库依赖，或把密钥写进了 compose"
+fi
+rm -rf "$tmp_compose_dir"
 
 echo "------------------------------------------------------------"
 printf "测试汇总：通过 %d 项，失败 %d 项\n" "$PASS_COUNT" "$FAIL_COUNT"

@@ -195,7 +195,8 @@ base_project_install() {
       fi
       return 1
     fi
-    if ! wait_container_ready "$PROJ_CONTAINER_NAME" "$target_port" 45; then
+    local ready_timeout="${PROJ_READY_TIMEOUT:-45}"
+    if ! wait_container_ready "$PROJ_CONTAINER_NAME" "$target_port" "$ready_timeout"; then
       handle_container_failure "$PROJ_CONTAINER_NAME" "$compose_file" "容器启动后端口探活超时"
       if [ -n "$compose_bak" ] && [ -f "$compose_bak" ]; then
         mv "$compose_bak" "$compose_file"
@@ -344,7 +345,8 @@ base_project_upgrade() {
       [ -n "$compose_bak" ] && [ -f "$compose_bak" ] && mv "$compose_bak" "$compose_file"
       return 1
     fi
-    if ! compose_cmd "$compose_file" up -d || ! wait_container_ready "$PROJ_CONTAINER_NAME" "${SAVED_PORT:-$PROJ_DEFAULT_HOST_PORT}" 45; then
+    local ready_timeout="${PROJ_READY_TIMEOUT:-45}"
+    if ! compose_cmd "$compose_file" up -d || ! wait_container_ready "$PROJ_CONTAINER_NAME" "${SAVED_PORT:-$PROJ_DEFAULT_HOST_PORT}" "$ready_timeout"; then
       log_err "新版本启动或探活失败！正在尝试自动回滚到升级前版本..."
       [ -n "$compose_bak" ] && [ -f "$compose_bak" ] && mv "$compose_bak" "$compose_file"
       if [ -n "$old_image_id" ]; then
