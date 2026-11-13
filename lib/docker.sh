@@ -87,23 +87,45 @@ ensure_docker_ready() {
     log_info "检测到缺少 Docker Compose 插件，正在自动补充安装..."
     case "$SYS_PKG_MGR" in
       apt)
-        apt-get update -qq && apt-get install -y -qq docker-compose-plugin
+        apt-get update -qq && apt-get install -y -qq docker-compose-plugin >/dev/null 2>&1 || true
         ;;
       dnf)
-        dnf install -y -q docker-compose-plugin
+        dnf install -y -q docker-compose-plugin >/dev/null 2>&1 || true
         ;;
       yum)
-        yum install -y -q docker-compose-plugin
+        yum install -y -q docker-compose-plugin >/dev/null 2>&1 || true
         ;;
       apk)
-        apk add --no-cache docker-cli-compose
+        apk add --no-cache docker-cli-compose >/dev/null 2>&1 || true
         ;;
     esac
   fi
 
+  # 若系统软件源不含 docker-compose-plugin（如 Debian/Ubuntu 自带 docker.io），直接下载官方二进制插件
+  if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
+    log_info "系统软件源未提供 Compose 插件，正在下载 Docker 官方 Compose V2 二进制插件..."
+    local arch_raw compose_arch
+    arch_raw="$(uname -m 2>/dev/null || echo 'x86_64')"
+    case "$arch_raw" in
+      x86_64|amd64)   compose_arch="x86_64" ;;
+      aarch64|arm64)  compose_arch="aarch64" ;;
+      *)              compose_arch="$arch_raw" ;;
+    esac
+    local plugin_dir="/usr/local/lib/docker/cli-plugins"
+    local plugin_bin="${plugin_dir}/docker-compose"
+    local compose_url="https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${compose_arch}"
+    mkdir -p "$plugin_dir"
+    if curl -fsSL --proto '=https' --tlsv1.2 --max-time 60 "$compose_url" -o "$plugin_bin" && [ -s "$plugin_bin" ]; then
+      chmod +x "$plugin_bin"
+      log_ok "Docker Compose V2 插件安装成功。"
+    else
+      rm -f "$plugin_bin"
+    fi
+  fi
+
   if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
     log_err "Docker Compose 仍不可用，请手动安装后再试："
-    printf "  ${C_GREEN}apt-get update && apt-get install -y docker-compose-plugin${C_RESET}\n" >&2
+    printf "  %bapt-get update && apt-get install -y docker-compose-plugin%b\n" "$C_GREEN" "$C_RESET" >&2
     return 1
   fi
 
