@@ -62,8 +62,8 @@ else
 fi
 
 list_out="$(bash "${ROOT_DIR}/install.sh" --list)"
-if printf '%s' "$list_out" | grep -q "sub2api" && printf '%s' "$list_out" | grep -q "newapi" && printf '%s' "$list_out" | grep -q "magpie"; then
-  ok "install.sh --list 正确列出 sub2api、newapi 与 magpie"
+if printf '%s' "$list_out" | grep -q "sub2api" && printf '%s' "$list_out" | grep -q "newapi" && printf '%s' "$list_out" | grep -q "magpie" && printf '%s' "$list_out" | grep -q "agent2api"; then
+  ok "install.sh --list 正确列出 sub2api、newapi、magpie 与 agent2api"
 else
   fail "install.sh --list 输出缺少预期项目: $list_out"
 fi
@@ -84,7 +84,7 @@ for bad_args in \
 done
 
 # 5. --dry-run 端到端流程测试（无副作用）
-for proj in sub2api newapi magpie; do
+for proj in sub2api newapi magpie agent2api; do
   if bash "${ROOT_DIR}/install.sh" --project "$proj" --action install --port auto --no-domain --yes --dry-run >/dev/null 2>&1; then
     ok "演练模式通过（无域名）: $proj"
   else
