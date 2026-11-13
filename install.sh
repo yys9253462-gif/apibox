@@ -290,8 +290,9 @@ load_projects_registry() {
     case "$line" in
       ""|\#*) continue ;;
     esac
-    IFS='|' read -r id name desc port script_rel repo image <<< "$line"
-    if [ -z "$id" ] || [ -z "$script_rel" ] || ! is_valid_port "${port:-}" || [ -z "${image:-}" ]; then
+    IFS='|' read -r id name desc port script_rel repo image extra <<< "$line"
+    # 多出来的字段说明这一行把竖线写进了某个字段，后面的列已经错位。
+    if [ -n "${extra:-}" ] || [ -z "$id" ] || [ -z "$script_rel" ] || ! is_valid_port "${port:-}" || [ -z "${image:-}" ]; then
       log_warn "跳过格式不完整的注册表条目: ${line}"
       continue
     fi

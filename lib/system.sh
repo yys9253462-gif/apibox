@@ -259,7 +259,8 @@ pick_free_port() {
 # 格式化输出已占用端口摘要（供面板展示）
 get_used_ports_summary() {
   local ports
-  ports="$(get_used_ports | head -15 | tr '\n' ' ' | sed 's/ $//')"
+  ports="$(get_used_ports | awk 'NR<=15{printf "%s ", $0}')"
+  ports="${ports% }"
   if [ -z "$ports" ]; then
     printf '暂无检测到监听端口'
   else
@@ -276,12 +277,18 @@ open_firewall_port() {
   fi
 
   if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
-    run_cmd ufw allow "${port}/tcp" >/dev/null 2>&1 || true
-    log_ok "已通过 UFW 防火墙放行端口 ${port}/tcp"
+    if run_cmd ufw allow "${port}/tcp" >/dev/null 2>&1; then
+      log_ok "已通过 UFW 防火墙放行端口 ${port}/tcp"
+    else
+      log_warn "UFW 放行 ${port}/tcp 失败，请手动执行: ufw allow ${port}/tcp"
+    fi
   elif command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld 2>/dev/null; then
-    run_cmd firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1 || true
-    run_cmd firewall-cmd --reload >/dev/null 2>&1 || true
-    log_ok "已通过 firewalld 防火墙放行端口 ${port}/tcp"
+    if run_cmd firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1 \
+       && run_cmd firewall-cmd --reload >/dev/null 2>&1; then
+      log_ok "已通过 firewalld 防火墙放行端口 ${port}/tcp"
+    else
+      log_warn "firewalld 放行 ${port}/tcp 失败，请手动执行: firewall-cmd --permanent --add-port=${port}/tcp && firewall-cmd --reload"
+    fi
   else
     log_info "未检测到启用的本地防火墙（ufw/firewalld），请确保云厂商安全组已放行 ${port}/tcp 端口。"
   fi

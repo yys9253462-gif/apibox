@@ -322,8 +322,14 @@ gen_secret() {
     bytes=32
   fi
   if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex "$bytes"
-  else
+    local secret=""
+    secret="$(openssl rand -hex "$bytes" 2>/dev/null | tr -cd '0-9a-f' || true)"
+    if [ "${#secret}" -eq $((bytes * 2)) ]; then
+      printf '%s' "$secret"
+      return 0
+    fi
+  fi
+  if [ -r /dev/urandom ]; then
     # od 每行默认 16 字节，行尾换行被删掉后，相邻两行会粘在一起少一个字节。
     # -w1 让每个字节单独一行，再去掉空白，长度才等于请求的字节数。
     head -c "$bytes" /dev/urandom | od -An -tx1 -w1 | tr -d ' \n'

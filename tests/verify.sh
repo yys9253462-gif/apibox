@@ -666,6 +666,39 @@ else
   fail "Docker 安装脚本下载成功即被信任"
 fi
 
+# 44. 防火墙放行失败时不再打印成功
+if grep -q 'UFW 放行 ${port}/tcp 失败' "${ROOT_DIR}/lib/system.sh" \
+   && grep -q 'firewalld 放行 ${port}/tcp 失败' "${ROOT_DIR}/lib/system.sh" \
+   && ! grep -q 'ufw allow "${port}/tcp" >/dev/null 2>&1 || true' "${ROOT_DIR}/lib/system.sh"; then
+  ok "防火墙放行失败会给出失败提示，不再一律报成功"
+else
+  fail "防火墙放行失败仍被当成成功"
+fi
+
+# 45. 端口摘要不再用 head 截断，避免配合 pipefail 时探测失败
+if ! grep -q 'get_used_ports | head' "${ROOT_DIR}/lib/system.sh" \
+   && grep -q "awk 'NR<=15" "${ROOT_DIR}/lib/system.sh"; then
+  ok "端口摘要用 awk 取前 15 个，不再用 head 截断管道"
+else
+  fail "端口摘要仍用 head 截断 get_used_ports 的输出"
+fi
+
+# 46. 注册表一行里字段过多会被拒绝，避免后面的列错位
+if grep -q 'extra <<<' "${ROOT_DIR}/install.sh" \
+   && grep -q '\${extra:-}' "${ROOT_DIR}/install.sh"; then
+  ok "注册表解析会拒绝字段过多的行"
+else
+  fail "注册表解析仍接受字段过多的行"
+fi
+
+# 47. openssl 输出长度不对时会改用 /dev/urandom
+if grep -q '/dev/urandom' "${ROOT_DIR}/lib/common.sh" \
+   && grep -q 'bytes \* 2' "${ROOT_DIR}/lib/common.sh"; then
+  ok "gen_secret 会校验 openssl 输出长度，不够时改用 /dev/urandom"
+else
+  fail "gen_secret 仍无条件信任 openssl 的输出"
+fi
+
 # 35. 证书探测按 curl 退出码判断，不把失败输出 000000 当成签发成功
 if grep -q 'code="${code:0:3}"' "${ROOT_DIR}/lib/ssl.sh" \
    && ! grep -q "|| echo '000'" "${ROOT_DIR}/lib/ssl.sh"; then
