@@ -318,9 +318,13 @@ configure_domain_ssl() {
         strip_caddy_block "$caddyfile" "$project_id"
         build_caddy_site_block "$project_id" "$domain" "$upstream" "$email" >> "$caddyfile"
         if ! reload_self_caddy; then
-          [ -f "${caddyfile}.bak" ] && cp "${caddyfile}.bak" "$caddyfile"
+          if [ -f "${caddyfile}.bak" ]; then
+            cp "${caddyfile}.bak" "$caddyfile"
+            rm -f "${caddyfile}.bak"
+          fi
           return 1
         fi
+        rm -f "${caddyfile}.bak"
       else
         log_info "[演练模式] 将写入 ${domain} -> ${upstream} 到 ${caddyfile}"
       fi

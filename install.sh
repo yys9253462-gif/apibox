@@ -41,7 +41,9 @@ _bootstrap_full_repo() {
   mkdir -p "$APIBOX_HOME"
 
   local tar_url="https://codeload.github.com/${REPO_OWNER}/${REPO_NAME}/tar.gz/refs/heads/${REPO_BRANCH}"
-  if ! curl -fsSL --proto '=https' --tlsv1.2 --max-time 30 "$tar_url" -o "$tmp_tgz"; then
+  local fallback_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/heads/${REPO_BRANCH}.tar.gz"
+  if ! curl -fsSL --proto '=https' --tlsv1.2 --retry 2 --max-time 30 "$tar_url" -o "$tmp_tgz" && \
+     ! curl -fsSL --proto '=https' --tlsv1.2 --retry 2 --max-time 30 "$fallback_url" -o "$tmp_tgz"; then
     echo "[错误] 下载 ApiBox 安装包失败，请检查服务器能否访问 GitHub。" >&2
     rm -rf "$tmp_tgz" "$tmp_extract"
     exit 1
@@ -88,9 +90,14 @@ source "${SCRIPT_DIR}/lib/ssl.sh"
 # shellcheck source=lib/project_base.sh
 source "${SCRIPT_DIR}/lib/project_base.sh"
 
-# 全局实例互斥锁（防止多终端并发改写共享 Caddyfile 或状态文件）
-APIBOX_LOCK_FILE="/tmp/apibox-installer.lock"
-APIBOX_LOCK_DIR="/tmp/apibox-installer.lock.d"
+# 全局实例互斥锁（按权限隔离路径，避免 Linux fs.protected_regular 导致 sudo 权限拒绝）
+if [ "$(id -u)" -eq 0 ] && [ -d /run ]; then
+  APIBOX_LOCK_FILE="/run/apibox-installer.lock"
+  APIBOX_LOCK_DIR="/run/apibox-installer.lock.d"
+else
+  APIBOX_LOCK_FILE="/tmp/apibox-installer-uid$(id -u).lock"
+  APIBOX_LOCK_DIR="/tmp/apibox-installer-uid$(id -u).lock.d"
+fi
 _LOCK_HELD_MODE=""
 
 _on_global_interrupt() {
@@ -303,11 +310,13 @@ get_project_badge() {
   fi
 }
 
-# 加载单个项目脚本并校验其存在性
+# 加载单个项目脚本并校验其存在性（加载前清理可选钩子，防止跨项目命名空间污染）
 load_project_module() {
   local idx="$1"
   local script_file="${SCRIPT_DIR}/${REG_SCRIPTS[$idx]}"
   [ -f "$script_file" ] || die "项目 [${REG_IDS[$idx]}] 的安装脚本不存在: ${script_file}"
+  unset -f project_write_env project_write_compose project_post_install_tips \
+    project_install project_status project_logs project_restart project_upgrade project_uninstall 2>/dev/null || true
   # shellcheck disable=SC1090
   source "$script_file"
 }

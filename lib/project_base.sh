@@ -176,16 +176,17 @@ base_project_install() {
 
   # 第 5 步：放行端口、绑定反代与保存状态
   log_step 5 5 "配置网络访问与保存安装记录"
-  open_firewall_port "$target_port"
-
   local final_domain=""
   if [ "$use_domain" -eq 1 ] && [ -n "$domain" ]; then
     if configure_domain_ssl "$PROJ_ID" "$domain" "${PROJ_CONTAINER_NAME}:${PROJ_INNER_PORT}" "$target_port" "$email"; then
       final_domain="$domain"
     else
-      log_warn "域名自动配置未完成，您仍可通过 IP + 端口访问服务。"
+      log_warn "域名自动配置未完成，将放行端口以便通过 IP + 端口访问服务。"
+      open_firewall_port "$target_port"
+      [ -n "$SAVED_DOMAIN" ] && remove_domain_ssl "$PROJ_ID"
     fi
   else
+    open_firewall_port "$target_port"
     if [ -n "$SAVED_DOMAIN" ]; then
       remove_domain_ssl "$PROJ_ID"
     fi
@@ -280,7 +281,8 @@ base_project_upgrade() {
       log_err "新版本启动或探活失败！正在尝试自动回滚到升级前版本..."
       if [ -n "$old_image_id" ]; then
         local current_img_ref
-        current_img_ref="${SAVED_IMAGE:-$PROJ_DEFAULT_IMAGE}"
+        current_img_ref="$(awk '/^[[:space:]]*image:[[:space:]]*/{print $2; exit}' "$compose_file" 2>/dev/null | tr -d '"' | tr -d "'" || true)"
+        [ -z "$current_img_ref" ] && current_img_ref="${SAVED_IMAGE:-$PROJ_DEFAULT_IMAGE}"
         docker tag "$old_image_id" "$current_img_ref" 2>/dev/null || true
         if compose_cmd "$compose_file" up -d 2>/dev/null && \
            wait_container_ready "$PROJ_CONTAINER_NAME" "${SAVED_PORT:-$PROJ_DEFAULT_HOST_PORT}" 30; then

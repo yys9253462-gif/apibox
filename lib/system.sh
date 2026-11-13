@@ -66,12 +66,8 @@ detect_system_info() {
   fi
 
   if command -v df >/dev/null 2>&1; then
-    SYS_DISK_AVAIL="$(df -BG / 2>/dev/null | awk 'NR==2{print $4}' | tr -d 'G' || true)"
-    if [ -n "$SYS_DISK_AVAIL" ]; then
-      SYS_DISK_AVAIL="${SYS_DISK_AVAIL} GB"
-    else
-      SYS_DISK_AVAIL="$(df -h / 2>/dev/null | awk 'NR==2{print $4}' || echo '未知')"
-    fi
+    SYS_DISK_AVAIL="$(df -Pk / 2>/dev/null | awk 'END{if (NF>=4 && $4 ~ /^[0-9]+$/) printf "%.1f GB", $4/1024/1024}' || true)"
+    [ -z "$SYS_DISK_AVAIL" ] && SYS_DISK_AVAIL="未知"
   fi
 }
 
@@ -128,7 +124,7 @@ ensure_base_deps() {
   case "$SYS_PKG_MGR" in
     apt)
       export DEBIAN_FRONTEND=noninteractive
-      run_cmd apt-get update -qq
+      run_cmd apt-get update -qq || log_warn "部分软件源索引更新失败，尝试继续安装基础工具..."
       run_cmd apt-get install -y -qq curl ca-certificates openssl tar iproute2 dnsutils
       ;;
     dnf)

@@ -261,6 +261,41 @@ else
   fail "发现未参数化的 printf 颜色格式串"
 fi
 
+# 16. 跨项目切换防可选钩子函数污染测试
+if (
+  source "${ROOT_DIR}/lib/common.sh"
+  source "${ROOT_DIR}/lib/project_base.sh"
+  source "${ROOT_DIR}/projects/sub2api.sh"
+  declare -F project_post_install_tips >/dev/null 2>&1
+  unset -f project_write_env project_write_compose project_post_install_tips \
+    project_install project_status project_logs project_restart project_upgrade project_uninstall 2>/dev/null || true
+  source "${ROOT_DIR}/projects/_template.sh"
+  ! declare -F project_post_install_tips >/dev/null 2>&1
+); then
+  ok "跨项目切换时正确清理可选钩子函数，杜绝张冠李戴"
+else
+  fail "跨项目切换未清理 project_post_install_tips 钩子"
+fi
+
+# 17. POSIX df -Pk 磁盘信息探测兼容性测试
+if (
+  source "${ROOT_DIR}/lib/common.sh"
+  source "${ROOT_DIR}/lib/system.sh"
+  detect_system_info
+  [[ "$SYS_DISK_AVAIL" =~ ^[0-9]+(\.[0-9]+)?\ GB$ ]] || [ "$SYS_DISK_AVAIL" = "未知" ]
+); then
+  ok "detect_system_info 磁盘空间探测格式规范（POSIX df -Pk）"
+else
+  fail "detect_system_info 磁盘空间解析格式异常: ${SYS_DISK_AVAIL:-空}"
+fi
+
+# 18. 锁文件权限隔离检查（防 fs.protected_regular 导致 sudo 权限拒绝）
+if grep -q 'apibox-installer-uid' "${ROOT_DIR}/install.sh"; then
+  ok "全局互斥锁已按 UID/权限隔离，避免 fs.protected_regular 碰撞"
+else
+  fail "全局互斥锁未按 UID 隔离"
+fi
+
 echo "------------------------------------------------------------"
 printf "测试汇总：通过 %d 项，失败 %d 项\n" "$PASS_COUNT" "$FAIL_COUNT"
 [ "$FAIL_COUNT" -eq 0 ]
