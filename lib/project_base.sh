@@ -169,12 +169,20 @@ base_project_install() {
     fi
     if ! out="$(compose_cmd "$compose_file" up -d 2>&1)"; then
       handle_container_failure "$PROJ_CONTAINER_NAME" "$compose_file" "$out"
-      [ -n "$compose_bak" ] && [ -f "$compose_bak" ] && mv "$compose_bak" "$compose_file"
+      if [ -n "$compose_bak" ] && [ -f "$compose_bak" ]; then
+        mv "$compose_bak" "$compose_file"
+      elif [ ! -f "$(base_conf_file)" ]; then
+        rm -f "$compose_file"
+      fi
       return 1
     fi
     if ! wait_container_ready "$PROJ_CONTAINER_NAME" "$target_port" 45; then
       handle_container_failure "$PROJ_CONTAINER_NAME" "$compose_file" "容器启动后端口探活超时"
-      [ -n "$compose_bak" ] && [ -f "$compose_bak" ] && mv "$compose_bak" "$compose_file"
+      if [ -n "$compose_bak" ] && [ -f "$compose_bak" ]; then
+        mv "$compose_bak" "$compose_file"
+      elif [ ! -f "$(base_conf_file)" ]; then
+        rm -f "$compose_file"
+      fi
       return 1
     fi
     [ -n "$compose_bak" ] && rm -f "$compose_bak"
@@ -298,7 +306,10 @@ base_project_upgrade() {
       local tmp_c="${compose_file}.tmp.$$"
       awk -v img="$target_image" '
         !done && /^[[:space:]]*image:[[:space:]]*/ {
-          sub(/image:.*/, "image: " img); done=1
+          match($0, /^[[:space:]]*/)
+          print substr($0, 1, RLENGTH) "image: " img
+          done=1
+          next
         }
         { print }
       ' "$compose_file" > "$tmp_c" && mv "$tmp_c" "$compose_file" || { rm -f "$tmp_c" "$compose_bak"; return 1; }

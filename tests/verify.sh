@@ -345,6 +345,65 @@ else
 fi
 rm -rf "$tmp_up_dir"
 
+# 22. compose 镜像行替换防 & 展开与缩进保留测试
+tmp_img_c="$(mktemp)"
+cat > "$tmp_img_c" <<'EOF'
+services:
+  app:
+    image: old/img:v1
+    restart: unless-stopped
+EOF
+new_img_test='localhost:5000/app:v2&special'
+awk -v img="$new_img_test" '
+  !done && /^[[:space:]]*image:[[:space:]]*/ {
+    match($0, /^[[:space:]]*/)
+    print substr($0, 1, RLENGTH) "image: " img
+    done=1
+    next
+  }
+  { print }
+' "$tmp_img_c" > "${tmp_img_c}.out"
+if grep -Fqx "    image: ${new_img_test}" "${tmp_img_c}.out"; then
+  ok "镜像行替换正确保留缩进且不展开 & 特殊字符"
+else
+  fail "镜像行替换发生格式或字符展开异常"
+fi
+rm -f "$tmp_img_c" "${tmp_img_c}.out"
+
+# 23. 日志超过 5MB 自动截断轮转测试
+tmp_big_log="$(mktemp)"
+python_cmd="$(command -v python3 || command -v python)"
+"$python_cmd" -c "
+with open(r'$tmp_big_log', 'wb') as f:
+    line = b'x' * 5999 + b'\n'
+    f.write(line * 1100)
+"
+if (
+  INSTALLER_LOG="$tmp_big_log"
+  source "${ROOT_DIR}/lib/common.sh"
+  lines_after="$(wc -l < "$tmp_big_log" | tr -d ' ')"
+  [ "$lines_after" -eq 1000 ]
+); then
+  ok "超过 5MB 的日志文件在加载时自动截断保留最近 1000 行"
+else
+  fail "超限日志文件自动截断未按预期生效"
+fi
+rm -f "$tmp_big_log"
+
+# 24. get_public_ip 探测失败缓存标记校验
+if (
+  source "${ROOT_DIR}/lib/common.sh"
+  source "${ROOT_DIR}/lib/system.sh"
+  DRY_RUN=0
+  _SYS_PUBLIC_IP_PROBED=1
+  SYS_PUBLIC_IP=""
+  ! get_public_ip >/dev/null 2>&1
+); then
+  ok "get_public_ip 失败探测缓存标记生效，避免无网环境重复超时卡顿"
+else
+  fail "get_public_ip 失败探测缓存未按预期工作"
+fi
+
 echo "------------------------------------------------------------"
 printf "测试汇总：通过 %d 项，失败 %d 项\n" "$PASS_COUNT" "$FAIL_COUNT"
 [ "$FAIL_COUNT" -eq 0 ]

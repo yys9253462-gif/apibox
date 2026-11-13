@@ -48,14 +48,8 @@ init_colors() {
 }
 init_colors
 
-# 写入日志并同步输出到终端（stderr，避免污染函数 stdout 返回值）
-_write_log() {
-  local level="$1"
-  shift
-  local msg="$*"
-  local ts
-  ts="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '未知时间')"
-  # 若日志超过 5MB 则自动截断保留最近 1000 行，防止长期运行占满磁盘
+# 若日志超过 5MB 则在加载时截断保留最近 1000 行，避免每条日志频繁派生子进程
+_rotate_log_if_needed() {
   if [ -f "$INSTALLER_LOG" ]; then
     local sz
     sz="$(wc -c < "$INSTALLER_LOG" 2>/dev/null || echo 0)"
@@ -64,6 +58,16 @@ _write_log() {
       tail -n 1000 "$INSTALLER_LOG" > "$tail_tmp" 2>/dev/null && mv "$tail_tmp" "$INSTALLER_LOG" 2>/dev/null || rm -f "$tail_tmp"
     fi
   fi
+}
+_rotate_log_if_needed
+
+# 写入日志并同步输出到终端（stderr，避免污染函数 stdout 返回值）
+_write_log() {
+  local level="$1"
+  shift
+  local msg="$*"
+  local ts
+  ts="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '未知时间')"
   # 追加到日志文件（忽略无权限错误）
   printf '[%s] [%s] %s\n' "$ts" "$level" "$msg" >> "$INSTALLER_LOG" 2>/dev/null || true
 }

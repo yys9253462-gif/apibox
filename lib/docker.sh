@@ -124,11 +124,12 @@ ensure_docker_ready() {
     local plugin_bin="${plugin_dir}/docker-compose"
     local compose_url="https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${compose_arch}"
     mkdir -p "$plugin_dir"
-    if curl -fsSL --proto '=https' --tlsv1.2 --max-time 60 "$compose_url" -o "$plugin_bin" && [ -s "$plugin_bin" ]; then
-      chmod +x "$plugin_bin"
+    if curl -fsSL --proto '=https' --tlsv1.2 --max-time 60 "$compose_url" -o "$plugin_bin" && \
+       [ -s "$plugin_bin" ] && chmod +x "$plugin_bin" && "$plugin_bin" version >/dev/null 2>&1; then
       log_ok "Docker Compose V2 插件安装成功。"
     else
       rm -f "$plugin_bin"
+      log_warn "下载的 Compose 插件无法执行或校验失败，已清理。"
     fi
   fi
 

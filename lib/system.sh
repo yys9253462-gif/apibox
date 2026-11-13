@@ -19,6 +19,7 @@ SYS_MEM_TOTAL="未知"
 SYS_MEM_AVAIL="未知"
 SYS_DISK_AVAIL="未知"
 SYS_PUBLIC_IP=""
+_SYS_PUBLIC_IP_PROBED=0
 
 # 检测操作系统、CPU、内存、磁盘
 detect_system_info() {
@@ -71,21 +72,27 @@ detect_system_info() {
   fi
 }
 
-# 探测本机公网 IPv4 地址（严禁使用内网路由探测）
+# 探测本机公网 IPv4 地址（严禁使用内网路由探测；失败后缓存探测状态防重复卡顿）
 get_public_ip() {
   if [ -n "$SYS_PUBLIC_IP" ]; then
     printf '%s' "$SYS_PUBLIC_IP"
     return 0
   fi
+  if [ "$_SYS_PUBLIC_IP_PROBED" = "1" ]; then
+    printf ''
+    return 1
+  fi
   if [ "$DRY_RUN" = "1" ]; then
     SYS_PUBLIC_IP="203.0.113.10"
+    _SYS_PUBLIC_IP_PROBED=1
     printf '%s' "$SYS_PUBLIC_IP"
     return 0
   fi
 
+  _SYS_PUBLIC_IP_PROBED=1
   local url ip=""
   for url in "https://api.ipify.org" "https://ipv4.icanhazip.com" "https://ifconfig.me/ip" "https://ipinfo.io/ip"; do
-    ip="$(curl -4 -fsSL --max-time 6 "$url" 2>/dev/null | tr -d '[:space:]' || true)"
+    ip="$(curl -4 -fsSL --connect-timeout 2 --max-time 3 "$url" 2>/dev/null | tr -d '[:space:]' || true)"
     if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
       SYS_PUBLIC_IP="$ip"
       printf '%s' "$SYS_PUBLIC_IP"
@@ -205,7 +212,7 @@ describe_port_owner() {
   local port="$1"
   local owner=""
   if command -v ss >/dev/null 2>&1; then
-    owner="$(ss -ltnp 2>/dev/null | awk -v p=":${port}$" 'NR>1 && $4 ~ p {print; exit}' | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -1 || true)"
+    owner="$(ss -ltnp 2>/dev/null | awk -v p=":${port}$" 'NR>1 && $4 ~ p && /users:/ {print; exit}' | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -1 || true)"
   fi
   if [ -z "$owner" ] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     owner="$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -E ":${port}->" | awk '{print "容器:"$1}' | head -1 || true)"

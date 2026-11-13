@@ -403,7 +403,12 @@ configure_domain_ssl() {
     conflict:*)
       local owner="${mode#conflict:}"
       log_warn "检测到 80/443 端口已被宿主机其他服务占用（${owner}），无法自动接管证书申请。"
-      print_manual_nginx_guide "$domain" "$app_host_port"
+      if printf '%s' "$owner" | grep -qi "caddy"; then
+        log_info "检测到宿主机运行着 Caddy，但未在 /etc/caddy/Caddyfile 找到配置，请将以下站点块手动添加到您的 Caddyfile："
+        build_caddy_site_block "$project_id" "$domain" "127.0.0.1:${app_host_port}" "$email" >&2
+      else
+        print_manual_nginx_guide "$domain" "$app_host_port"
+      fi
       return 2
       ;;
   esac
@@ -420,7 +425,11 @@ verify_https_certificate() {
   log_info "正在自动向 Let's Encrypt 申请并验证 [${domain}] 的 HTTPS 证书（约需 5-15 秒）..."
   local i=0 code="000"
   while [ "$i" -lt 18 ]; do
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "https://${domain}/" 2>/dev/null || echo '000')"
+    # 优先走本地 127.0.0.1 SNI 探测，避免云厂商不支持 NAT 回环导致误判
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 --resolve "${domain}:443:127.0.0.1" "https://${domain}/" 2>/dev/null || echo '000')"
+    if [ "$code" = "000" ]; then
+      code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "https://${domain}/" 2>/dev/null || echo '000')"
+    fi
     if [ "$code" != "000" ]; then
       log_ok "HTTPS 证书签发成功！访问 https://${domain} 返回状态码: ${code}（证书将自动续期）"
       return 0

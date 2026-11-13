@@ -63,6 +63,7 @@ _bootstrap_full_repo() {
     exit 1
   fi
 
+  rm -rf "${APIBOX_HOME}/lib" "${APIBOX_HOME}/projects" "${APIBOX_HOME}/tests"
   cp -a "${top_dir}/." "${APIBOX_HOME}/"
   chmod +x "${APIBOX_HOME}/install.sh" "${APIBOX_HOME}"/lib/*.sh "${APIBOX_HOME}"/projects/*.sh 2>/dev/null || true
   rm -rf "$tmp_tgz" "$tmp_extract"
