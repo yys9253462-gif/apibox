@@ -69,7 +69,7 @@ base_project_install() {
   log_step 2 5 "配置服务访问端口"
   local target_port="${CLI_PORT:-${SAVED_PORT:-$PROJ_DEFAULT_HOST_PORT}}"
   if [ "$target_port" = "auto" ]; then
-    target_port="$(pick_free_port "$PROJ_DEFAULT_HOST_PORT")"
+    target_port="$(pick_free_port "$PROJ_DEFAULT_HOST_PORT")" || die "未能找到 65000 以下的可用空闲端口，请手动释放端口后重试。"
     log_info "已自动选择空闲端口: ${target_port}"
   fi
 
@@ -78,7 +78,7 @@ base_project_install() {
     owner="$(describe_port_owner "$target_port")"
     if is_port_in_use "$target_port" && [ "$owner" != "容器:${PROJ_CONTAINER_NAME}" ]; then
       local suggested
-      suggested="$(pick_free_port $((target_port + 1)))"
+      suggested="$(pick_free_port $((target_port + 1)))" || die "端口 ${target_port} 已被占用且未找到可用备选端口。"
       log_warn "端口 ${target_port} 已被 [${owner:-未知进程}] 占用，自动为您推荐空闲端口: ${suggested}"
       target_port="$suggested"
     fi
@@ -89,12 +89,14 @@ base_project_install() {
       target_port="$(ask "请输入 ${PROJ_NAME} 宿主机监听端口" "$target_port")"
       if ! is_valid_port "$target_port"; then
         log_warn "端口必须是 1 到 65535 之间的纯数字（不能以 0 开头）。"
+        [ "$ASSUME_YES" = "1" ] || [ ! -t 0 ] && die "非交互模式下默认端口无效: ${target_port}"
         continue
       fi
       local owner
       owner="$(describe_port_owner "$target_port")"
       if [ "$DRY_RUN" != "1" ] && is_port_in_use "$target_port" && [ "$owner" != "容器:${PROJ_CONTAINER_NAME}" ]; then
         log_warn "端口 ${target_port} 已被 [${owner:-未知进程}] 占用，请换一个端口。"
+        [ "$ASSUME_YES" = "1" ] || [ ! -t 0 ] && die "非交互模式下端口 ${target_port} 已被占用，请用 --port auto 或指定其他端口。"
         continue
       fi
       break
@@ -259,13 +261,34 @@ base_project_restart() {
 }
 
 base_project_upgrade() {
+  ensure_root "$@"
+  base_load_saved
   local compose_file
   compose_file="$(base_compose_file)"
   [ -f "$compose_file" ] || { log_warn "尚未安装 ${PROJ_NAME}。"; return 1; }
-  log_info "正在拉取最新镜像并滚动重建 ${PROJ_NAME}（原有数据不会丢失）..."
+  log_info "正在拉取最新镜像并滚动重建 ${PROJ_NAME}（原有数据不会丢失，失败将自动回滚）..."
   if [ "$DRY_RUN" != "1" ]; then
-    compose_cmd "$compose_file" pull
-    compose_cmd "$compose_file" up -d
+    local old_image_id=""
+    if docker info >/dev/null 2>&1; then
+      old_image_id="$(docker inspect -f '{{.Image}}' "$PROJ_CONTAINER_NAME" 2>/dev/null || true)"
+    fi
+    if ! compose_cmd "$compose_file" pull; then
+      log_err "拉取新镜像失败，已保留原运行容器未做改动。"
+      return 1
+    fi
+    if ! compose_cmd "$compose_file" up -d || ! wait_container_ready "$PROJ_CONTAINER_NAME" "${SAVED_PORT:-$PROJ_DEFAULT_HOST_PORT}" 45; then
+      log_err "新版本启动或探活失败！正在尝试自动回滚到升级前版本..."
+      if [ -n "$old_image_id" ]; then
+        local current_img_ref
+        current_img_ref="${SAVED_IMAGE:-$PROJ_DEFAULT_IMAGE}"
+        docker tag "$old_image_id" "$current_img_ref" 2>/dev/null || true
+        compose_cmd "$compose_file" up -d 2>/dev/null || true
+        log_warn "已回滚到升级前镜像（ID: ${old_image_id:0:19}）。"
+      fi
+      return 1
+    fi
+  else
+    log_info "[演练模式] 将拉取最新镜像并执行带健康门禁的升级"
   fi
   log_ok "${PROJ_NAME} 更新完成。"
 }

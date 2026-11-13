@@ -55,6 +55,15 @@ _write_log() {
   local msg="$*"
   local ts
   ts="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '未知时间')"
+  # 若日志超过 5MB 则自动截断保留最近 1000 行，防止长期运行占满磁盘
+  if [ -f "$INSTALLER_LOG" ]; then
+    local sz
+    sz="$(wc -c < "$INSTALLER_LOG" 2>/dev/null || echo 0)"
+    if [ "${sz:-0}" -gt 5242880 ]; then
+      local tail_tmp="${INSTALLER_LOG}.trim.$$"
+      tail -n 1000 "$INSTALLER_LOG" > "$tail_tmp" 2>/dev/null && mv "$tail_tmp" "$INSTALLER_LOG" 2>/dev/null || rm -f "$tail_tmp"
+    fi
+  fi
   # 追加到日志文件（忽略无权限错误）
   printf '[%s] [%s] %s\n' "$ts" "$level" "$msg" >> "$INSTALLER_LOG" 2>/dev/null || true
 }
@@ -230,8 +239,8 @@ save_conf_kv() {
     v="${v//$'\r'/}"
     printf '%s=%s\n' "$k" "$v" >> "$tmp_file"
   done
-  chmod 600 "$tmp_file"
-  mv "$tmp_file" "$conf_file"
+  chmod 600 "$tmp_file" || { rm -f "$tmp_file"; return 1; }
+  mv "$tmp_file" "$conf_file" || { rm -f "$tmp_file"; return 1; }
 }
 
 # 安全读取配置文件（严禁 source，使用键白名单 + printf -v 防命令注入）
@@ -321,4 +330,10 @@ is_valid_email() {
   local e="$1"
   [ -z "$e" ] && return 0
   [[ "$e" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]
+}
+
+# 校验容器镜像名格式（非空、不含空白或控制字符）
+is_valid_image() {
+  local img="$1"
+  [ -n "$img" ] && [[ ! "$img" =~ [[:space:]] ]]
 }

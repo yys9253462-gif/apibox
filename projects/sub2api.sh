@@ -23,7 +23,14 @@ project_write_env() {
   fi
 
   if [ -f "$env_file" ]; then
-    log_info "检测到已有配置文件 ${env_file}，将保留原密钥与管理员设置（幂等安全）。"
+    log_info "检测到已有配置文件 ${env_file}，将保留原密钥并同步更新端口设置（幂等安全）。"
+    if grep -q '^HOST_PORT=' "$env_file" 2>/dev/null; then
+      local tmp_env="${env_file}.tmp.$$"
+      awk -v p="$host_port" '/^HOST_PORT=/{print "HOST_PORT=" p; next} {print}' "$env_file" > "$tmp_env" \
+        && chmod 600 "$tmp_env" && mv "$tmp_env" "$env_file" || rm -f "$tmp_env"
+    else
+      printf 'HOST_PORT=%s\n' "$host_port" >> "$env_file"
+    fi
     return 0
   fi
 

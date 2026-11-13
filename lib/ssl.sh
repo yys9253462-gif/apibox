@@ -23,6 +23,9 @@ _on_ssl_interrupt() {
     caddy validate --config "$_CADDY_TARGET_CFG" >/dev/null 2>&1 && caddy reload --config "$_CADDY_TARGET_CFG" >/dev/null 2>&1 || true
     log_warn "检测到操作中断，已自动回滚反代配置。"
   fi
+  if declare -F release_instance_lock >/dev/null 2>&1; then
+    release_instance_lock
+  fi
   exit 130
 }
 
@@ -159,8 +162,7 @@ strip_caddy_block() {
     $0 == s { skip=1; next }
     $0 == e { skip=0; next }
     !skip { print }
-  ' "$cfg_file" > "$tmp_file"
-  mv "$tmp_file" "$cfg_file"
+  ' "$cfg_file" > "$tmp_file" && mv "$tmp_file" "$cfg_file" || { rm -f "$tmp_file"; return 1; }
 }
 
 # 生成单个项目的 Caddy 站点配置块
@@ -173,7 +175,7 @@ build_caddy_site_block() {
   now_ts="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '未知时间')"
 
   printf '\n# >>> vps-proxy:%s >>>\n' "$project_id"
-  printf '# 由 vps-proxy-installer 自动维护（更新于 %s），请勿手动修改此标记块\n' "$now_ts"
+  printf '# 由 apibox 自动维护（更新于 %s），请勿手动修改此标记块\n' "$now_ts"
   printf '%s {\n' "$domain"
   if [ -n "$email" ]; then
     printf '    tls %s\n' "$email"

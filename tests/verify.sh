@@ -76,6 +76,7 @@ for bad_args in \
   "--email invalid_email" \
   "--domain invalid_domain" \
   "--domain api.example.com --no-domain" \
+  "--image bad\ image" \
   "--project not_exists"; do
   # shellcheck disable=SC2086
   if bash "${ROOT_DIR}/install.sh" $bad_args >/dev/null 2>&1; then
@@ -183,6 +184,31 @@ if (
 else
   fail "get_used_ports 执行异常退出"
 fi
+
+# 11. sub2api 重配端口同步 .env 中 HOST_PORT 且保留密钥测试
+tmp_sub_dir="$(mktemp -d)"
+cat > "${tmp_sub_dir}/.env" <<'EOF'
+TZ=Asia/Shanghai
+PORT=8080
+HOST_PORT=8080
+JWT_SECRET=keep_this_secret_123
+ADMIN_PASSWORD=keep_pass
+EOF
+
+if (
+  source "${ROOT_DIR}/lib/common.sh"
+  source "${ROOT_DIR}/lib/project_base.sh"
+  source "${ROOT_DIR}/projects/sub2api.sh"
+  DRY_RUN=0
+  project_write_env "$tmp_sub_dir" "18088" 2>/dev/null
+  grep -qx "HOST_PORT=18088" "${tmp_sub_dir}/.env" &&
+  grep -qx "JWT_SECRET=keep_this_secret_123" "${tmp_sub_dir}/.env"
+); then
+  ok "sub2api 重配端口时同步更新 HOST_PORT 且保留原密钥"
+else
+  fail "sub2api 重配端口未同步 HOST_PORT 或破坏了原密钥"
+fi
+rm -rf "$tmp_sub_dir"
 
 echo "------------------------------------------------------------"
 printf "测试汇总：通过 %d 项，失败 %d 项\n" "$PASS_COUNT" "$FAIL_COUNT"

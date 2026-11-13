@@ -35,10 +35,10 @@ _bootstrap_full_repo() {
     fi
   fi
 
-  local tmp_tgz="/tmp/apibox-${REPO_BRANCH}.tar.gz"
-  local tmp_extract="/tmp/apibox-extract-$$"
-  rm -rf "$tmp_extract"
-  mkdir -p "$tmp_extract" "$APIBOX_HOME"
+  local tmp_tgz tmp_extract
+  tmp_tgz="$(mktemp "/tmp/apibox-${REPO_BRANCH}.XXXXXX.tar.gz")"
+  tmp_extract="$(mktemp -d "/tmp/apibox-extract.XXXXXX")"
+  mkdir -p "$APIBOX_HOME"
 
   local tar_url="https://codeload.github.com/${REPO_OWNER}/${REPO_NAME}/tar.gz/refs/heads/${REPO_BRANCH}"
   if ! curl -fsSL --proto '=https' --tlsv1.2 --max-time 30 "$tar_url" -o "$tmp_tgz"; then
@@ -47,7 +47,7 @@ _bootstrap_full_repo() {
     exit 1
   fi
 
-  if [ ! -s "$tmp_tgz" ] || ! tar -xzf "$tmp_tgz" -C "$tmp_extract"; then
+  if [ ! -s "$tmp_tgz" ] || ! tar --no-same-owner -xzf "$tmp_tgz" -C "$tmp_extract"; then
     echo "[错误] 解压 ApiBox 安装包失败。" >&2
     rm -rf "$tmp_tgz" "$tmp_extract"
     exit 1
@@ -108,6 +108,7 @@ acquire_instance_lock() {
     _LOCK_HELD_MODE="mkdir"
   fi
   trap release_instance_lock EXIT
+  trap 'release_instance_lock; exit 130' INT TERM
 }
 
 release_instance_lock() {
@@ -140,7 +141,7 @@ REG_IMAGES=()
 
 print_usage() {
   cat <<'EOF'
-VPS 反代项目一键安装脚本集合 (vps-proxy-installer)
+ApiBox — VPS 反代项目一键安装脚本集合
 
 用法：
   交互式菜单（推荐新手）：
@@ -150,7 +151,7 @@ VPS 反代项目一键安装脚本集合 (vps-proxy-installer)
     sudo bash install.sh --project <项目ID> [选项]
 
 常用选项：
-  --project <id>      指定项目 ID（如 sub2api、newapi）
+  --project <id>      指定项目 ID（如 sub2api、newapi、magpie、agent2api）
   --action <act>      指定操作：install（安装，默认）| status | logs | restart | upgrade | uninstall
   --port <port|auto>  指定宿主机端口，或使用 auto 自动挑选空闲端口
   --domain <domain>   绑定域名并自动申请 Let's Encrypt HTTPS 证书
@@ -208,6 +209,7 @@ parse_args() {
         ;;
       --image)
         [ -n "${2:-}" ] || die "参数 --image 缺少镜像名"
+        is_valid_image "$2" || die "镜像名格式不合法（不能包含空白字符）: $2"
         CLI_IMAGE="$2"
         shift 2
         ;;
@@ -280,18 +282,18 @@ load_projects_registry() {
 get_project_badge() {
   local id="$1"
   local container="vps-proxy-${id}"
-  if command -v docker >/dev/null 2>&1; then
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     local st
     st="$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || true)"
     case "$st" in
-      running) printf "${C_GREEN}[运行中]${C_RESET}" ; return 0 ;;
-      exited|dead|created) printf "${C_YELLOW}[已停止]${C_RESET}" ; return 0 ;;
+      running) printf '%b[运行中]%b' "$C_GREEN" "$C_RESET" ; return 0 ;;
+      exited|dead|created) printf '%b[已停止]%b' "$C_YELLOW" "$C_RESET" ; return 0 ;;
     esac
   fi
   if [ -f "${VPS_BASE_DIR}/${id}/docker-compose.yml" ]; then
-    printf "${C_YELLOW}[已配置]${C_RESET}"
+    printf '%b[已配置]%b' "$C_YELLOW" "$C_RESET"
   else
-    printf "${C_DIM}[未安装]${C_RESET}"
+    printf '%b[未安装]%b' "$C_DIM" "$C_RESET"
   fi
 }
 
