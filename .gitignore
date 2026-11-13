@@ -1,0 +1,11 @@
+# 运行时临时文件与本地密钥
+*.log
+*.bak
+*.tmp
+.env
+.install.conf
+data/
+logs/
+certs/
+.DS_Store
+Thumbs.db
