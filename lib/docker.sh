@@ -35,7 +35,7 @@ start_docker_service() {
   fi
   if ! docker info >/dev/null 2>&1; then
     log_err "Docker 服务启动失败，请复制以下命令查看详细报错："
-    printf "  ${C_GREEN}systemctl status docker --no-pager -l${C_RESET}\n" >&2
+    printf '  %bsystemctl status docker --no-pager -l%b\n' "$C_GREEN" "$C_RESET" >&2
     return 1
   fi
   return 0
@@ -55,12 +55,17 @@ ensure_docker_ready() {
 
   if [ "$need_install" -eq 1 ]; then
     log_info "未检测到 Docker，准备自动安装 Docker 与 Docker Compose..."
-    local installer_tmp="/tmp/get-docker.sh"
-    if ! curl -fsSL --proto '=https' --tlsv1.2 --max-time 30 "https://get.docker.com" -o "$installer_tmp"; then
-      log_warn "从官方源下载 Docker 安装脚本失败，尝试使用阿里云镜像脚本..."
-      if ! curl -fsSL --proto '=https' --tlsv1.2 --max-time 30 "https://get.docker.com" -o "$installer_tmp"; then
+    local installer_tmp use_aliyun=0
+    installer_tmp="$(mktemp "/tmp/get-docker.XXXXXX.sh")"
+    if ! curl -fsSL --proto '=https' --tlsv1.2 --retry 2 --max-time 30 "https://get.docker.com" -o "$installer_tmp"; then
+      log_warn "从官方源下载 Docker 安装脚本失败，尝试使用国内镜像站脚本..."
+      if curl -fsSL --proto '=https' --tlsv1.2 --max-time 30 "https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg" >/dev/null 2>&1 && \
+         curl -fsSL --proto '=https' --tlsv1.2 --max-time 30 "https://get.docker.com" -o "$installer_tmp"; then
+        use_aliyun=1
+      else
+        rm -f "$installer_tmp"
         log_err "下载 Docker 安装脚本失败，请检查服务器网络连接后重试，或手动执行："
-        printf "  ${C_GREEN}curl -fsSL https://get.docker.com -o /tmp/get-docker.sh && sh /tmp/get-docker.sh${C_RESET}\n" >&2
+        printf '  %bcurl -fsSL https://get.docker.com -o /tmp/get-docker.sh && sh /tmp/get-docker.sh%b\n' "$C_GREEN" "$C_RESET" >&2
         return 1
       fi
     fi
@@ -71,7 +76,11 @@ ensure_docker_ready() {
     fi
 
     log_info "正在执行 Docker 安装，大约需要 1-2 分钟，请耐心等待..."
-    sh "$installer_tmp"
+    if [ "$use_aliyun" -eq 1 ]; then
+      sh "$installer_tmp" --mirror Aliyun
+    else
+      sh "$installer_tmp"
+    fi
     rm -f "$installer_tmp"
     log_ok "Docker 安装完成。"
   fi
@@ -141,13 +150,16 @@ ensure_proxy_network() {
     return 0
   fi
   if ! docker network inspect "$net_name" >/dev/null 2>&1; then
-    docker network create "$net_name" >/dev/null
+    if ! docker network create "$net_name" >/dev/null; then
+      log_err "创建容器共享反代网络 [${net_name}] 失败，请检查 Docker 网络状态。"
+      return 1
+    fi
     log_ok "已创建容器共享反代网络: ${net_name}"
   fi
 }
 
 # 等待容器真正就绪（避免 docker-proxy 绑定端口造成的假通过）
-# 用法：wait_container_healthy "容器名" "容器内部端口" [最大等待秒数]
+# 用法：wait_container_ready "容器名" "宿主机映射端口" [最大等待秒数]
 wait_container_ready() {
   local container="$1"
   local port="$2"
@@ -160,23 +172,25 @@ wait_container_ready() {
   log_info "正在等待服务启动并检测端口就绪（最多 ${timeout} 秒）..."
   local i=0
   while [ "$i" -lt "$timeout" ]; do
-    local state
+    local state restarts
     state="$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || echo 'missing')"
     if [ "$state" = "exited" ] || [ "$state" = "dead" ]; then
       log_err "容器 ${container} 已意外退出（状态: ${state}）。"
       return 1
     fi
+    if [ "$state" = "restarting" ]; then
+      restarts="$(docker inspect -f '{{.RestartCount}}' "$container" 2>/dev/null || echo '0')"
+      if [ "${restarts:-0}" -ge 2 ]; then
+        log_err "容器 ${container} 陷入崩溃重启循环（已重启 ${restarts} 次），提前中止等待。"
+        return 1
+      fi
+    fi
     if [ "$state" = "running" ]; then
-      # 优先检测本地回环端口是否真正响应
-      if curl -sf --max-time 2 "http://127.0.0.1:${port}/" >/dev/null 2>&1 || \
-         curl -s -o /dev/null --max-time 2 "http://127.0.0.1:${port}/" 2>/dev/null; then
-        # 检查从宿主机能否真正连上且不立刻重置连接
-        local code
-        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${port}/" 2>/dev/null || echo '000')"
-        if [ "$code" != "000" ]; then
-          log_ok "服务已就绪（HTTP 状态码: ${code}）。"
-          return 0
-        fi
+      local code
+      code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${port}/" 2>/dev/null || echo '000')"
+      if [ "$code" != "000" ]; then
+        log_ok "服务已就绪（HTTP 状态码: ${code}）。"
+        return 0
       fi
     fi
     sleep 2
@@ -193,10 +207,10 @@ handle_container_failure() {
   local compose_file="$2"
   local raw_err="${3:-}"
 
-  printf "\n" >&2
+  printf '\n' >&2
   log_err "容器 [${container}] 启动或运行异常！"
   if [ -n "$raw_err" ]; then
-    printf "  ${C_DIM}原始错误摘要:${C_RESET}\n" >&2
+    printf '  %b原始错误摘要:%b\n' "$C_DIM" "$C_RESET" >&2
     printf '%s\n' "$raw_err" | tail -8 | sed 's/^/    /' >&2
 
     case "$raw_err" in
@@ -215,10 +229,10 @@ handle_container_failure() {
     esac
   fi
 
-  printf "\n  您可以复制以下手动命令排查：\n" >&2
-  printf "  查看最近日志: ${C_GREEN}docker logs --tail 100 %s${C_RESET}\n" "$container" >&2
-  printf "  尝试手动重启: ${C_GREEN}docker compose -f %s restart${C_RESET}\n" "$compose_file" >&2
-  printf "  彻底卸载清理: ${C_GREEN}docker compose -f %s down${C_RESET}\n\n" "$compose_file" >&2
+  printf '\n  您可以复制以下手动命令排查：\n' >&2
+  printf '  查看最近日志: %bdocker logs --tail 100 %s%b\n' "$C_GREEN" "$container" "$C_RESET" >&2
+  printf '  尝试手动重启: %bdocker compose -f %s restart%b\n' "$C_GREEN" "$compose_file" "$C_RESET" >&2
+  printf '  彻底卸载清理: %bdocker compose -f %s down%b\n\n' "$C_GREEN" "$compose_file" "$C_RESET" >&2
 
   if [ "$ASSUME_YES" = "1" ] || [ ! -t 0 ]; then
     return 1

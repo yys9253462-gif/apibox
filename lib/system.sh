@@ -277,11 +277,11 @@ print_system_banner() {
   ports_summary="$(get_used_ports_summary)"
 
   print_hr
-  printf "  ${C_BOLD}系统信息${C_RESET}  : %s (%s)\n" "$SYS_OS_NAME" "$SYS_ARCH" >&2
-  printf "  ${C_BOLD}硬件资源${C_RESET}  : %s 核 CPU | 内存 %s (可用 %s) | 磁盘剩余 %s\n" \
-    "$SYS_CPU_CORES" "$SYS_MEM_TOTAL" "$SYS_MEM_AVAIL" "$SYS_DISK_AVAIL" >&2
-  printf "  ${C_BOLD}公网 IP${C_RESET}   : %s\n" "$pub_ip" >&2
-  printf "  ${C_BOLD}Docker${C_RESET}    : %s\n" "$docker_status" >&2
-  printf "  ${C_BOLD}已占端口${C_RESET}  : %s\n" "$ports_summary" >&2
+  printf '  %b系统信息%b  : %s (%s)\n' "$C_BOLD" "$C_RESET" "$SYS_OS_NAME" "$SYS_ARCH" >&2
+  printf '  %b硬件资源%b  : %s 核 CPU | 内存 %s (可用 %s) | 磁盘剩余 %s\n' \
+    "$C_BOLD" "$C_RESET" "$SYS_CPU_CORES" "$SYS_MEM_TOTAL" "$SYS_MEM_AVAIL" "$SYS_DISK_AVAIL" >&2
+  printf '  %b公网 IP%b   : %s\n' "$C_BOLD" "$C_RESET" "$pub_ip" >&2
+  printf '  %bDocker%b    : %s\n' "$C_BOLD" "$C_RESET" "$docker_status" >&2
+  printf '  %b已占端口%b  : %s\n' "$C_BOLD" "$C_RESET" "$ports_summary" >&2
   print_hr
 }

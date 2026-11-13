@@ -93,6 +93,11 @@ APIBOX_LOCK_FILE="/tmp/apibox-installer.lock"
 APIBOX_LOCK_DIR="/tmp/apibox-installer.lock.d"
 _LOCK_HELD_MODE=""
 
+_on_global_interrupt() {
+  release_instance_lock
+  exit 130
+}
+
 acquire_instance_lock() {
   [ "$DRY_RUN" = "1" ] && return 0
   if command -v flock >/dev/null 2>&1; then
@@ -108,7 +113,7 @@ acquire_instance_lock() {
     _LOCK_HELD_MODE="mkdir"
   fi
   trap release_instance_lock EXIT
-  trap 'release_instance_lock; exit 130' INT TERM
+  trap _on_global_interrupt INT TERM
 }
 
 release_instance_lock() {
@@ -260,6 +265,7 @@ load_projects_registry() {
 
   local line id name desc port script_rel repo image
   while IFS= read -r line || [ -n "$line" ]; do
+    line="${line//$'\r'/}"
     # 跳过空行与注释
     case "$line" in
       ""|\#*) continue ;;
@@ -332,24 +338,24 @@ list_projects() {
 # 展示全部已安装容器与端口总览
 show_all_services_overview() {
   print_hr
-  printf "  ${C_BOLD}当前已占用的 TCP 端口：${C_RESET}\n" >&2
+  printf '  %b当前已占用的 TCP 端口：%b\n' "$C_BOLD" "$C_RESET" >&2
   local ports_info
   ports_info="$(get_used_ports)"
   if [ -z "$ports_info" ]; then
-    printf "    （暂无）\n" >&2
+    printf '    （暂无）\n' >&2
   else
     local p owner
     for p in $ports_info; do
       owner="$(describe_port_owner "$p")"
-      printf "    端口 %-6s -> %s\n" "$p" "${owner:-未知进程}" >&2
+      printf '    端口 %-6s -> %s\n' "$p" "${owner:-未知进程}" >&2
     done
   fi
-  printf "\n  ${C_BOLD}已部署的反代容器：${C_RESET}\n" >&2
+  printf '\n  %b已部署的反代容器：%b\n' "$C_BOLD" "$C_RESET" >&2
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     docker ps -a --filter "name=vps-proxy-" \
       --format "    {{.Names}}\t{{.Status}}\t{{.Ports}}" >&2 || true
   else
-    printf "    （Docker 未安装或未运行）\n" >&2
+    printf '    （Docker 未安装或未运行）\n' >&2
   fi
   print_hr
   pause_enter
@@ -361,20 +367,20 @@ project_submenu() {
   load_project_module "$idx"
 
   while true; do
-    printf "\n" >&2
+    printf '\n' >&2
     print_hr
-    printf "  ${C_BOLD}当前项目：${C_CYAN}%s${C_RESET}  %s\n" "${REG_NAMES[$idx]}" "$(get_project_badge "${REG_IDS[$idx]}")" >&2
-    printf "  简介：%s\n" "${REG_DESCS[$idx]}" >&2
-    printf "  仓库：%s\n" "${REG_REPOS[$idx]}" >&2
+    printf '  %b当前项目：%b%s%b  %b\n' "$C_BOLD" "$C_CYAN" "${REG_NAMES[$idx]}" "$C_RESET" "$(get_project_badge "${REG_IDS[$idx]}")" >&2
+    printf '  简介：%s\n' "${REG_DESCS[$idx]}" >&2
+    printf '  仓库：%s\n' "${REG_REPOS[$idx]}" >&2
     print_hr
-    printf "    1) 安装 / 重新配置（支持自动装 Docker 与申请 HTTPS 证书）\n" >&2
-    printf "    2) 查看运行状态与访问地址\n" >&2
-    printf "    3) 查看实时日志（排查启动异常）\n" >&2
-    printf "    4) 重启服务\n" >&2
-    printf "    5) 更新到最新镜像\n" >&2
-    printf "    6) 卸载服务\n" >&2
-    printf "    9) 返回上级菜单\n" >&2
-    printf "    0) 退出脚本\n" >&2
+    printf '    1) 安装 / 重新配置（支持自动装 Docker 与申请 HTTPS 证书）\n' >&2
+    printf '    2) 查看运行状态与访问地址\n' >&2
+    printf '    3) 查看实时日志（排查启动异常）\n' >&2
+    printf '    4) 重启服务\n' >&2
+    printf '    5) 更新到最新镜像\n' >&2
+    printf '    6) 卸载服务\n' >&2
+    printf '    9) 返回上级菜单\n' >&2
+    printf '    0) 退出脚本\n' >&2
     print_hr
 
     local sub_choice
@@ -396,30 +402,34 @@ project_submenu() {
 # 主交互菜单
 main_menu() {
   # 首屏人话欢迎语
-  printf "\n" >&2
-  printf "${C_BOLD}${C_CYAN}============================================================${C_RESET}\n" >&2
-  printf "${C_BOLD}${C_CYAN}        VPS 反代项目一键部署与管理工具 (v1.0)               ${C_RESET}\n" >&2
-  printf "${C_BOLD}${C_CYAN}============================================================${C_RESET}\n" >&2
-  printf "  面向新手设计：自动检测系统环境、安装 Docker、分配空闲端口、\n" >&2
-  printf "  配置反向代理并免费申请/自动续期 Let's Encrypt HTTPS 证书。\n" >&2
-  printf "  全程约需 1-3 分钟，拿不准的提示直接按回车使用默认值即可。\n" >&2
+  printf '\n' >&2
+  printf '%b%b============================================================%b\n' "$C_BOLD" "$C_CYAN" "$C_RESET" >&2
+  printf '%b%b        VPS 反代项目一键部署与管理工具 (v1.0)               %b\n' "$C_BOLD" "$C_CYAN" "$C_RESET" >&2
+  printf '%b%b============================================================%b\n' "$C_BOLD" "$C_CYAN" "$C_RESET" >&2
+  printf '  面向新手设计：自动检测系统环境、安装 Docker、分配空闲端口、\n' >&2
+  printf '  配置反向代理并免费申请/自动续期 Let'\''s Encrypt HTTPS 证书。\n' >&2
+  printf '  全程约需 1-3 分钟，拿不准的提示直接按回车使用默认值即可。\n' >&2
 
+  local need_redraw=1
   while true; do
-    print_system_banner
-    printf "  ${C_BOLD}请选择要安装或管理的反代项目：${C_RESET}\n\n" >&2
+    if [ "$need_redraw" -eq 1 ]; then
+      print_system_banner
+      printf '  %b请选择要安装或管理的反代项目：%b\n\n' "$C_BOLD" "$C_RESET" >&2
 
-    local i num
-    for ((i = 0; i < ${#REG_IDS[@]}; i++)); do
-      num=$((i + 1))
-      printf "    %d) %-12s %s  - %s\n" \
-        "$num" "${REG_NAMES[$i]}" "$(get_project_badge "${REG_IDS[$i]}")" "${REG_DESCS[$i]}" >&2
-    done
+      local i num
+      for ((i = 0; i < ${#REG_IDS[@]}; i++)); do
+        num=$((i + 1))
+        printf '    %d) %-12s %b  - %s\n' \
+          "$num" "${REG_NAMES[$i]}" "$(get_project_badge "${REG_IDS[$i]}")" "${REG_DESCS[$i]}" >&2
+      done
 
-    printf "\n  ${C_BOLD}系统辅助功能：${C_RESET}\n" >&2
-    printf "    88) 单独检查 / 自动安装 Docker 与 Compose 环境\n" >&2
-    printf "    89) 查看已占用端口与所有反代容器总览\n" >&2
-    printf "     0) 退出脚本\n" >&2
-    print_hr
+      printf '\n  %b系统辅助功能：%b\n' "$C_BOLD" "$C_RESET" >&2
+      printf '    88) 单独检查 / 自动安装 Docker 与 Compose 环境\n' >&2
+      printf '    89) 查看已占用端口与所有反代容器总览\n' >&2
+      printf '     0) 退出脚本\n' >&2
+      print_hr
+      need_redraw=0
+    fi
 
     local choice
     choice="$(ask "请输入数字编号" "1")"
@@ -433,12 +443,15 @@ main_menu() {
         ensure_base_deps
         ensure_docker_ready || true
         pause_enter
+        need_redraw=1
         continue
       elif [ "$choice" -eq 89 ]; then
         show_all_services_overview
+        need_redraw=1
         continue
       elif [ "$choice" -ge 1 ] && [ "$choice" -le "${#REG_IDS[@]}" ]; then
         project_submenu $((choice - 1))
+        need_redraw=1
         continue
       fi
     fi
@@ -482,9 +495,9 @@ main() {
   # 若当前不是交互终端且未指定 --project，明确告知用户并退出，避免死循环
   if [ ! -t 0 ] && [ "$DRY_RUN" != "1" ]; then
     log_warn "当前不是交互式终端，无法显示交互菜单。"
-    printf "  请使用以下命令先下载再运行，或通过 --project 参数指定项目：\n" >&2
-    printf "  ${C_GREEN}bash install.sh --list${C_RESET}\n" >&2
-    printf "  ${C_GREEN}bash install.sh --project sub2api --port auto --no-domain --yes${C_RESET}\n" >&2
+    printf '  请使用以下命令先下载再运行，或通过 --project 参数指定项目：\n' >&2
+    printf '  %bbash install.sh --list%b\n' "$C_GREEN" "$C_RESET" >&2
+    printf '  %bbash install.sh --project sub2api --port auto --no-domain --yes%b\n' "$C_GREEN" "$C_RESET" >&2
     exit 1
   fi
 

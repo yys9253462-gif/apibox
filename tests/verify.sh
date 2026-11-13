@@ -210,6 +210,57 @@ else
 fi
 rm -rf "$tmp_sub_dir"
 
+# 12. 配置文件含 CRLF (\r) 时的容错解析测试
+tmp_crlf_conf="$(mktemp)"
+printf 'SAVED_PORT=3425\r\nSAVED_DOMAIN=magpie.example.com\r\n' > "$tmp_crlf_conf"
+if (
+  source "${ROOT_DIR}/lib/common.sh"
+  SAVED_PORT=""
+  SAVED_DOMAIN=""
+  load_conf_safe "$tmp_crlf_conf" "SAVED_PORT" "SAVED_DOMAIN"
+  [ "$SAVED_PORT" = "3425" ] && [ "$SAVED_DOMAIN" = "magpie.example.com" ]
+); then
+  ok "load_conf_safe 兼容剥离意外带入的 CRLF 回车符"
+else
+  fail "load_conf_safe 未正确剥离 CRLF 回车符"
+fi
+rm -f "$tmp_crlf_conf"
+
+# 13. 邮箱注入字符严格拦截测试
+if (
+  source "${ROOT_DIR}/lib/common.sh"
+  is_valid_email "admin@example.com" &&
+  ! is_valid_email "a{b}@example.com" &&
+  ! is_valid_email "admin@ex;ample.com"
+); then
+  ok "is_valid_email 严格拦截花括号与分号等配置注入字符"
+else
+  fail "is_valid_email 校验未按预期拦截特殊字符"
+fi
+
+# 14. 内置 Caddyfile 必须保留 Admin API（禁止写入 admin off 导致 reload 失效）
+tmp_caddy_dir="$(mktemp -d)"
+if (
+  source "${ROOT_DIR}/lib/common.sh"
+  source "${ROOT_DIR}/lib/ssl.sh"
+  DRY_RUN=0
+  CADDY_DATA_DIR="$tmp_caddy_dir"
+  ensure_self_caddy_files
+  [ -f "${tmp_caddy_dir}/Caddyfile" ] && ! grep -q "admin off" "${tmp_caddy_dir}/Caddyfile"
+); then
+  ok "内置 Caddyfile 保留本地 Admin API 以支持零中断 caddy reload"
+else
+  fail "内置 Caddyfile 异常包含 admin off 或未生成"
+fi
+rm -rf "$tmp_caddy_dir"
+
+# 15. 全仓 printf 格式串静态扫描（禁止把 ${C_*} 拼接进格式字符串）
+if ! grep -rnE 'printf[[:space:]]+"[^"]*\$\{C_' "${ROOT_DIR}/install.sh" "${ROOT_DIR}/lib" "${ROOT_DIR}/projects" >/dev/null 2>&1; then
+  ok "全仓脚本 printf 格式串均已参数化（无颜色变量直接拼接）"
+else
+  fail "发现未参数化的 printf 颜色格式串"
+fi
+
 echo "------------------------------------------------------------"
 printf "测试汇总：通过 %d 项，失败 %d 项\n" "$PASS_COUNT" "$FAIL_COUNT"
 [ "$FAIL_COUNT" -eq 0 ]

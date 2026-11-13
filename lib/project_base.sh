@@ -282,8 +282,12 @@ base_project_upgrade() {
         local current_img_ref
         current_img_ref="${SAVED_IMAGE:-$PROJ_DEFAULT_IMAGE}"
         docker tag "$old_image_id" "$current_img_ref" 2>/dev/null || true
-        compose_cmd "$compose_file" up -d 2>/dev/null || true
-        log_warn "已回滚到升级前镜像（ID: ${old_image_id:0:19}）。"
+        if compose_cmd "$compose_file" up -d 2>/dev/null && \
+           wait_container_ready "$PROJ_CONTAINER_NAME" "${SAVED_PORT:-$PROJ_DEFAULT_HOST_PORT}" 30; then
+          log_ok "已成功回滚并恢复升级前镜像（ID: ${old_image_id:0:19}）。"
+        else
+          log_err "已尝试回滚到旧镜像（ID: ${old_image_id:0:19}），但服务未通过探活，请手动检查日志：docker logs --tail 50 ${PROJ_CONTAINER_NAME}"
+        fi
       fi
       return 1
     fi

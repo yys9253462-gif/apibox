@@ -127,11 +127,11 @@ ensure_root() {
   fi
   log_err "安装依赖、配置容器与绑定 80/443 端口需要管理员（root）权限。"
   if command -v sudo >/dev/null 2>&1; then
-    printf "  请复制以下命令重新运行：\n" >&2
-    printf "  ${C_GREEN}sudo bash %s %s${C_RESET}\n" "$0" "$*" >&2
+    printf '  请复制以下命令重新运行：\n' >&2
+    printf '  %bsudo bash %s %s%b\n' "$C_GREEN" "$0" "$*" "$C_RESET" >&2
   else
-    printf "  当前系统未安装 sudo，请先执行以下命令切换到 root 用户再运行：\n" >&2
-    printf "  ${C_GREEN}su -${C_RESET}\n" >&2
+    printf '  当前系统未安装 sudo，请先执行以下命令切换到 root 用户再运行：\n' >&2
+    printf '  %bsu -%b\n' "$C_GREEN" "$C_RESET" >&2
   fi
   exit 1
 }
@@ -152,9 +152,9 @@ ask() {
   fi
 
   if [ -n "$default" ]; then
-    printf "  %s ${C_DIM}[默认: %s]${C_RESET}: " "$prompt" "$default" >&2
+    printf '  %s %b[默认: %s]%b: ' "$prompt" "$C_DIM" "$default" "$C_RESET" >&2
   else
-    printf "  %s: " "$prompt" >&2
+    printf '  %s: ' "$prompt" >&2
   fi
 
   if ! IFS= read -r ans; then
@@ -190,9 +190,9 @@ ask_yn() {
   fi
 
   while true; do
-    printf "  %s ${C_DIM}[%s]${C_RESET}: " "$prompt" "$hint" >&2
+    printf '  %s %b[%s]%b: ' "$prompt" "$C_DIM" "$hint" "$C_RESET" >&2
     if ! IFS= read -r ans; then
-      printf "\n" >&2
+      printf '\n' >&2
       log_warn "输入流已中断，确认操作安全起见按「否」处理。"
       return 1
     fi
@@ -202,7 +202,7 @@ ask_yn() {
     case "$ans" in
       y|Y|yes|YES|是) return 0 ;;
       n|N|no|NO|否)   return 1 ;;
-      *) printf "  ${C_YELLOW}请输入 y（是）或 n（否）${C_RESET}\n" >&2 ;;
+      *) printf '  %b请输入 y（是）或 n（否）%b\n' "$C_YELLOW" "$C_RESET" >&2 ;;
     esac
   done
 }
@@ -212,7 +212,7 @@ pause_enter() {
   if [ "$ASSUME_YES" = "1" ] || [ ! -t 0 ]; then
     return 0
   fi
-  printf "\n  ${C_DIM}按回车键继续...${C_RESET}" >&2
+  printf '\n  %b按回车键继续...%b' "$C_DIM" "$C_RESET" >&2
   IFS= read -r _ || true
 }
 
@@ -254,6 +254,7 @@ load_conf_safe() {
   local line k v valid_count=0 total_nonempty=0
 
   while IFS= read -r line || [ -n "$line" ]; do
+    line="${line//$'\r'/}"
     # 跳过空行与注释
     case "$line" in
       ""|\#*) continue ;;
@@ -325,11 +326,11 @@ normalize_domain() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
-# 校验邮箱格式（空串视为跳过，非空需符合基础邮箱格式）
+# 校验邮箱格式（空串视为跳过，非空严格限定标准邮箱字符集，防配置块注入）
 is_valid_email() {
   local e="$1"
   [ -z "$e" ] && return 0
-  [[ "$e" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]
+  [[ "$e" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]
 }
 
 # 校验容器镜像名格式（非空、不含空白或控制字符）

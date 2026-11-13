@@ -203,12 +203,10 @@ ensure_self_caddy_files() {
   if [ ! -f "$caddyfile" ]; then
     cat > "$caddyfile" <<'EOF'
 # ==============================================================================
-# vps-proxy-installer 集中反向代理配置（由脚本自动维护）
+# apibox 集中反向代理配置（由脚本自动维护）
 # Let's Encrypt 证书自动申请并保存于 ./data 目录，到期前自动续期
+# 注意：保留默认本地 Admin API (localhost:2019) 以支持零中断 caddy reload 热重载
 # ==============================================================================
-{
-    admin off
-}
 EOF
   fi
 
@@ -291,9 +289,9 @@ server {
     }
 }
 EOF
-  printf "\n  然后执行以下命令自动申请 Let's Encrypt 证书并重载 Nginx：\n" >&2
-  printf "  ${C_GREEN}nginx -t && systemctl reload nginx${C_RESET}\n" >&2
-  printf "  ${C_GREEN}certbot --nginx -d %s${C_RESET}\n" "$domain" >&2
+  printf '\n  然后执行以下命令自动申请 Let'\''s Encrypt 证书并重载 Nginx：\n' >&2
+  printf '  %bnginx -t && systemctl reload nginx%b\n' "$C_GREEN" "$C_RESET" >&2
+  printf '  %bcertbot --nginx -d %s%b\n' "$C_GREEN" "$domain" "$C_RESET" >&2
   print_hr
 }
 
@@ -350,18 +348,39 @@ configure_domain_ssl() {
       strip_caddy_block "$host_cfg" "$project_id"
       build_caddy_site_block "$project_id" "$domain" "127.0.0.1:${app_host_port}" "$email" >> "$host_cfg"
 
-      if ! caddy validate --config "$host_cfg" >/dev/null 2>&1 || \
-         ! caddy reload --config "$host_cfg" >/dev/null 2>&1; then
-        log_err "宿主机 Caddy 校验或重载失败，正在自动回滚到原配置..."
+      if ! caddy validate --config "$host_cfg" >/dev/null 2>&1; then
+        log_err "宿主机 Caddyfile 语法校验失败，错误详情如下："
+        caddy validate --config "$host_cfg" 2>&1 | tail -8 | sed 's/^/    /' >&2 || true
+        log_warn "正在自动回滚到原配置..."
+        cp "$bak_file" "$host_cfg"
+        _CADDY_BAK_ACTIVE=0
+        if declare -F _on_global_interrupt >/dev/null 2>&1; then
+          trap _on_global_interrupt INT TERM
+        else
+          trap - INT TERM
+        fi
+        return 1
+      fi
+
+      if ! caddy reload --config "$host_cfg" >/dev/null 2>&1; then
+        log_err "宿主机 Caddy 重载失败，正在自动回滚到原配置..."
         cp "$bak_file" "$host_cfg"
         caddy reload --config "$host_cfg" >/dev/null 2>&1 || true
         _CADDY_BAK_ACTIVE=0
-        trap - INT TERM
+        if declare -F _on_global_interrupt >/dev/null 2>&1; then
+          trap _on_global_interrupt INT TERM
+        else
+          trap - INT TERM
+        fi
         return 1
       fi
 
       _CADDY_BAK_ACTIVE=0
-      trap - INT TERM
+      if declare -F _on_global_interrupt >/dev/null 2>&1; then
+        trap _on_global_interrupt INT TERM
+      else
+        trap - INT TERM
+      fi
       log_ok "已成功接入宿主机 Caddy。"
       verify_https_certificate "$domain"
       return 0
@@ -396,18 +415,18 @@ verify_https_certificate() {
     i=$((i + 3))
   done
 
-  printf "\n" >&2
+  printf '\n' >&2
   log_warn "暂时未能通过 https://${domain} 完成 TLS 握手（可能证书仍在后台签发，或遇到网络/解析拦截）。"
-  printf "  ${C_BOLD}请按以下顺序快速排查：${C_RESET}\n" >&2
-  printf "    1) 检查云厂商控制台安全组：确保 TCP 80 和 443 端口已对 0.0.0.0/0 放行；\n" >&2
-  printf "    2) 检查域名解析：确认 %s 的 A 记录已指向本机公网 IP；\n" "$domain" >&2
-  printf "    3) 若使用 Cloudflare 代理：请将 SSL/TLS 模式设为「完全（Full）」，勿选「灵活（Flexible）」；\n" >&2
-  printf "    4) 同一域名每周向 Let's Encrypt 申请证书有 5 次频率限制，超限需等待或换子域名。\n\n" >&2
-  printf "  您可以复制以下命令查看证书申请实时日志：\n" >&2
+  printf '  %b请按以下顺序快速排查：%b\n' "$C_BOLD" "$C_RESET" >&2
+  printf '    1) 检查云厂商控制台安全组：确保 TCP 80 和 443 端口已对 0.0.0.0/0 放行；\n' >&2
+  printf '    2) 检查域名解析：确认 %s 的 A 记录已指向本机公网 IP；\n' "$domain" >&2
+  printf '    3) 若使用 Cloudflare 代理：请将 SSL/TLS 模式设为「完全（Full）」，勿选「灵活（Flexible）」；\n' >&2
+  printf '    4) 同一域名每周向 Let'\''s Encrypt 申请证书有 5 次频率限制，超限需等待或换子域名。\n\n' >&2
+  printf '  您可以复制以下命令查看证书申请实时日志：\n' >&2
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CADDY_CONTAINER_NAME"; then
-    printf "  ${C_GREEN}docker logs --tail 50 %s${C_RESET}\n" "$CADDY_CONTAINER_NAME" >&2
+    printf '  %bdocker logs --tail 50 %s%b\n' "$C_GREEN" "$CADDY_CONTAINER_NAME" "$C_RESET" >&2
   else
-    printf "  ${C_GREEN}journalctl -u caddy -n 50 --no-pager${C_RESET}\n" >&2
+    printf '  %bjournalctl -u caddy -n 50 --no-pager%b\n' "$C_GREEN" "$C_RESET" >&2
   fi
   return 0
 }
