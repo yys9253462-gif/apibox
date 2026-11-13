@@ -324,7 +324,9 @@ gen_secret() {
   if command -v openssl >/dev/null 2>&1; then
     openssl rand -hex "$bytes"
   else
-    head -c "$bytes" /dev/urandom | od -An -tx1 | tr -d ' \n'
+    # od 每行默认 16 字节，行尾换行被删掉后，相邻两行会粘在一起少一个字节。
+    # -w1 让每个字节单独一行，再去掉空白，长度才等于请求的字节数。
+    head -c "$bytes" /dev/urandom | od -An -tx1 -w1 | tr -d ' \n'
   fi
 }
 
@@ -338,6 +340,18 @@ is_valid_port() {
 is_valid_domain() {
   local d="$1"
   [[ "$d" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]
+}
+
+# 菜单里的域名先去掉用户随手带上的协议、路径和端口，再做校验。
+canonicalize_domain() {
+  local d="$1"
+  d="${d#http://}"
+  d="${d#https://}"
+  d="${d%%/*}"
+  d="${d%%:*}"
+  d="$(normalize_domain "$d")"
+  d="${d%.}"
+  printf '%s' "$d"
 }
 
 # 域名转小写规范化

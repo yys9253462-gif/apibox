@@ -53,14 +53,20 @@ _bootstrap_full_repo() {
     exit 1
   fi
 
-  if [ ! -s "$tmp_tgz" ] || ! tar --no-same-owner -xzf "$tmp_tgz" -C "$tmp_extract"; then
-    echo "[错误] 解压 ApiBox 安装包失败。" >&2
+  # gzip 魔数不对就直接拒绝。网络中间设备有时会返回一段 HTML，tar 解出来也不是仓库。
+  if [ ! -s "$tmp_tgz" ] || ! gzip -t "$tmp_tgz" 2>/dev/null || ! tar --no-same-owner -xzf "$tmp_tgz" -C "$tmp_extract"; then
+    echo "[错误] 下载到的安装包不完整或不是有效的压缩包。" >&2
     rm -rf "$tmp_tgz" "$tmp_extract"
     exit 1
   fi
 
   local top_dir
-  top_dir="$(find "$tmp_extract" -maxdepth 1 -mindepth 1 -type d | head -1)"
+  # 不用 head 截断 find 的输出。配合 pipefail 时，find 被提前关掉会让整个自举失败。
+  top_dir=""
+  for top_dir in "$tmp_extract"/*/ ; do
+    break
+  done
+  top_dir="${top_dir%/}"
   if [ -z "$top_dir" ] || [ ! -f "${top_dir}/install.sh" ]; then
     echo "[错误] 安装包结构异常，未找到主程序。" >&2
     rm -rf "$tmp_tgz" "$tmp_extract"

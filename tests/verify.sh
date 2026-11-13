@@ -566,6 +566,106 @@ else
   fail "卸载失败回退仍只删除应用容器"
 fi
 
+# 36. 空的 NAT 区间不能让端口检查把整个脚本退出
+if (
+  set -euo pipefail
+  source "${ROOT_DIR}/lib/common.sh"
+  source "${ROOT_DIR}/lib/system.sh"
+  is_port_in_use 8080 "" "-"
+  exit 1
+); then
+  fail "is_port_in_use 遇到空的 NAT 区间时让脚本退出"
+else
+  ok "is_port_in_use 遇到空的 NAT 区间时正常返回端口可用"
+fi
+
+# 37. 菜单输入的域名会去掉协议、端口和路径
+if (
+  source "${ROOT_DIR}/lib/common.sh"
+  [ "$(canonicalize_domain 'https://API.Example.COM:8443/path')" = "api.example.com" ] \
+    && is_valid_domain "$(canonicalize_domain 'https://API.Example.COM:8443/path')"
+); then
+  ok "canonicalize_domain 去掉协议、端口与路径并转成小写"
+else
+  fail "canonicalize_domain 未按预期清洗域名"
+fi
+
+# 38. 带协议的域名仍能识别成已占用，不会再写一份重复站点
+tmp_scheme_cfg="$(mktemp)"
+printf '%s\n' 'api.example.com{' '    respond "ok"' '}' > "$tmp_scheme_cfg"
+if (
+  source "${ROOT_DIR}/lib/common.sh"
+  source "${ROOT_DIR}/lib/ssl.sh"
+  ! check_caddy_domain_conflict "$tmp_scheme_cfg" other "https://api.example.com/"
+); then
+  ok "带协议和路径的域名仍能命中已有的 Caddy 站点"
+else
+  fail "带协议的域名绕过了 Caddy 冲突检测"
+fi
+rm -f "$tmp_scheme_cfg"
+
+# 39. 自举下载会先校验 gzip，并且不用 head 截断 find
+if grep -q 'gzip -t "$tmp_tgz"' "${ROOT_DIR}/install.sh" \
+   && ! grep -q 'find "$tmp_extract".*head -1' "${ROOT_DIR}/install.sh"; then
+  ok "自举下载先校验 gzip，并避免 find 被 head 提前关闭"
+else
+  fail "自举下载仍直接解压未校验的内容，或仍用 head 截断 find"
+fi
+
+# 40. 端口占用者按完整端口匹配，查 80 不会命中 8080
+owner_out="$(awk -v p='80' '
+  {
+    name=$1
+    for (i = 2; i <= NF; i++) {
+      n = split($i, parts, ",")
+      for (j = 1; j <= n; j++) {
+        mapping = parts[j]
+        sub(/.*:/, "", mapping)
+        sub(/->.*/, "", mapping)
+        if (mapping == p) { print "容器:" name; exit }
+      }
+    }
+  }' <<'EOF'
+vps-proxy-sub2api 0.0.0.0:8080->8080/tcp
+vps-proxy-caddy 0.0.0.0:80->80/tcp
+EOF
+)"
+if [ "$owner_out" = "容器:vps-proxy-caddy" ]; then
+  ok "端口占用者按完整端口匹配，80 不会误命中 8080"
+else
+  fail "端口占用者匹配把 8080 当成了 80: ${owner_out:-空}"
+fi
+
+# 41. 探活按墙上时钟计时，而不是按循环次数乘 2
+if grep -q 'date +%s' "${ROOT_DIR}/lib/docker.sh" \
+   && grep -q 'started' "${ROOT_DIR}/lib/docker.sh"; then
+  ok "wait_container_ready 按墙上时钟计算超时"
+else
+  fail "wait_container_ready 仍按循环次数估算超时"
+fi
+
+# 42. 没有 openssl 时，退化的密钥生成长度等于请求的字节数
+if ! command -v openssl >/dev/null 2>&1; then
+  if (
+    source "${ROOT_DIR}/lib/common.sh"
+    sec="$(gen_secret 32)"
+    [ "${#sec}" -eq 64 ]
+  ); then
+    ok "缺少 openssl 时 gen_secret 仍按请求的字节数生成"
+  else
+    fail "缺少 openssl 时 gen_secret 的长度不对"
+  fi
+else
+  ok "当前环境有 openssl，密钥长度由 openssl 保证"
+fi
+
+# 43. Docker 安装脚本下载失败后不会把探测响应当成安装脚本
+if grep -q "grep -q 'docker' \"\$installer_tmp\"" "${ROOT_DIR}/lib/docker.sh"; then
+  ok "Docker 安装脚本下载后会先确认内容里真有 docker"
+else
+  fail "Docker 安装脚本下载成功即被信任"
+fi
+
 # 35. 证书探测按 curl 退出码判断，不把失败输出 000000 当成签发成功
 if grep -q 'code="${code:0:3}"' "${ROOT_DIR}/lib/ssl.sh" \
    && ! grep -q "|| echo '000'" "${ROOT_DIR}/lib/ssl.sh"; then

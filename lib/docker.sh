@@ -57,10 +57,12 @@ ensure_docker_ready() {
     log_info "未检测到 Docker，准备自动安装 Docker 与 Docker Compose..."
     local installer_tmp use_aliyun=0
     installer_tmp="$(mktemp "/tmp/get-docker.XXXXXX.sh")"
-    if ! curl -fsSL --proto '=https' --tlsv1.2 --retry 2 --max-time 30 "https://get.docker.com" -o "$installer_tmp"; then
+    if ! curl -fsSL --proto '=https' --tlsv1.2 --retry 2 --max-time 30 "https://get.docker.com" -o "$installer_tmp" \
+       || ! grep -q 'docker' "$installer_tmp"; then
       log_warn "从官方源下载 Docker 安装脚本失败，尝试使用国内镜像站脚本..."
       if curl -fsSL --proto '=https' --tlsv1.2 --max-time 30 "https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg" >/dev/null 2>&1 && \
-         curl -fsSL --proto '=https' --tlsv1.2 --max-time 30 "https://get.docker.com" -o "$installer_tmp"; then
+         curl -fsSL --proto '=https' --tlsv1.2 --max-time 30 "https://get.docker.com" -o "$installer_tmp" && \
+         grep -q 'docker' "$installer_tmp"; then
         use_aliyun=1
       else
         rm -f "$installer_tmp"
@@ -171,7 +173,8 @@ wait_container_ready() {
   fi
 
   log_info "正在等待服务启动并检测端口就绪（最多 ${timeout} 秒）..."
-  local i=0
+  local i=0 started
+  started="$(date +%s 2>/dev/null || echo 0)"
   while [ "$i" -lt "$timeout" ]; do
     local state restarts
     state="$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || echo 'missing')"
@@ -197,7 +200,12 @@ wait_container_ready() {
       fi
     fi
     sleep 2
-    i=$((i + 2))
+    # 按墙上时钟计时。每次探测本身要花时间，按循环次数乘 2 会把上限放宽到接近两倍。
+    if [ "$started" != "0" ]; then
+      i=$(( $(date +%s) - started ))
+    else
+      i=$((i + 2))
+    fi
   done
 
   log_warn "服务启动超时（${timeout} 秒内未收到 HTTP 响应），请查看日志确认原因。"

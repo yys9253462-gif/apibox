@@ -145,11 +145,11 @@ base_project_install() {
           use_domain=0
           break
         fi
+        domain="$(canonicalize_domain "$domain")"
         if ! is_valid_domain "$domain"; then
           log_warn "域名格式看起来不正确（示例：${PROJ_ID}.example.com），请重新输入。"
           continue
         fi
-        domain="$(normalize_domain "$domain")"
         if check_domain_dns "$domain"; then
           use_domain=1
           while true; do

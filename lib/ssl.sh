@@ -130,7 +130,7 @@ check_caddy_domain_conflict() {
   local cfg_file="$1"
   local project_id="$2"
   local domain
-  domain="$(normalize_domain "$3")"
+  domain="$(canonicalize_domain "$3")"
   [ -f "$cfg_file" ] || return 0
 
   local start_mark="# >>> vps-proxy:${project_id} >>>"
@@ -140,7 +140,7 @@ check_caddy_domain_conflict() {
     $0 == s { skip=1; next }
     $0 == e { skip=0; next }
     skip { next }
-    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    /^[[:space:]]*#([^[{]|$)/ || /^[[:space:]]*$/ { next }
     index($0, "{") > 0 {
       hdr = tolower($0)
       sub(/\{.*/, "", hdr)
@@ -310,7 +310,11 @@ EOF
 configure_domain_ssl() {
   local project_id="$1"
   local domain
-  domain="$(normalize_domain "$2")"
+  domain="$(canonicalize_domain "$2")"
+  if ! is_valid_domain "$domain"; then
+    log_err "域名格式不合法: ${2}"
+    return 1
+  fi
   local upstream="$3"
   local app_host_port="$4"
   local email="${5:-}"

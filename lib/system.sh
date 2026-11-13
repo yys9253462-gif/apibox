@@ -202,6 +202,11 @@ is_port_in_use() {
   for range in $nat_ranges; do
     start_p="${range%-*}"
     end_p="${range#*-}"
+    # 解析不出数字时跳过。空串直接做 -ge 比较会在 set -e 下让整个安装退出。
+    case "$start_p$end_p" in
+      *[!0-9]*) continue ;;
+      "") continue ;;
+    esac
     if [ "$target_port" -ge "$start_p" ] && [ "$target_port" -le "$end_p" ]; then
       return 0
     fi
@@ -217,7 +222,20 @@ describe_port_owner() {
     owner="$(ss -ltnp 2>/dev/null | awk -v p=":${port}$" 'NR>1 && $4 ~ p && /users:/ {print; exit}' | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -1 || true)"
   fi
   if [ -z "$owner" ] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    owner="$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -E ":${port}->" | awk '{print "容器:"$1}' | head -1 || true)"
+    # 端口按字段匹配。写成 :${port}-> 时，查 80 会命中 8080 与 44380。
+    owner="$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | awk -v p="$port" '
+      {
+        name=$1
+        for (i = 2; i <= NF; i++) {
+          n = split($i, parts, ",")
+          for (j = 1; j <= n; j++) {
+            mapping = parts[j]
+            sub(/.*:/, "", mapping)
+            sub(/->.*/, "", mapping)
+            if (mapping == p) { print "容器:" name; exit }
+          }
+        }
+      }' || true)"
   fi
   printf '%s' "$owner"
 }
