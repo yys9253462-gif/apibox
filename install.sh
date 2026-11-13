@@ -6,8 +6,12 @@
 
 set -euo pipefail
 
-# 定位脚本所在目录
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 定位脚本真实所在目录（自动穿透 /usr/local/bin/apibox 软链接）
+_SELF_PATH="${BASH_SOURCE[0]}"
+if command -v readlink >/dev/null 2>&1; then
+  _SELF_PATH="$(readlink -f "$_SELF_PATH" 2>/dev/null || printf '%s' "$_SELF_PATH")"
+fi
+SCRIPT_DIR="$(cd "$(dirname "$_SELF_PATH")" && pwd)"
 REPO_OWNER="yys9253462-gif"
 REPO_NAME="apibox"
 REPO_BRANCH="main"
