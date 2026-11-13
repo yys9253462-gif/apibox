@@ -45,15 +45,15 @@
 登录到您的 **VPS 服务器终端**（建议使用 `root` 用户，若为普通用户请先执行 `su -` 或 `sudo -i`），**直接复制下面这一条命令粘贴回车**：
 
 ```bash
-curl -fsSL https://cdn.jsdelivr.net/gh/yys9253462-gif/apibox@main/install.sh -o /tmp/apibox.sh && bash /tmp/apibox.sh
+curl -fsSL https://raw.githubusercontent.com/yys9253462-gif/apibox/main/install.sh -o /tmp/apibox.sh && bash /tmp/apibox.sh
 ```
 
 > **说明**：
 > - 无需提前安装 `git` 或 `Docker`，脚本会自动下载完整组件到 `/opt/apibox` 并打开中文交互菜单。
 > - 以后需要更新脚本或再次打开菜单，直接执行 `bash /opt/apibox/install.sh`（或重新粘贴上面那条命令）即可。
-> - **备用源**（若上方 CDN 访问较慢，可改用 GitHub 直连）：
+> - **备用加速源（CDN）**（若上方 GitHub 直连较慢或不通，可改用）：
 >   ```bash
->   curl -fsSL https://raw.githubusercontent.com/yys9253462-gif/apibox/main/install.sh -o /tmp/apibox.sh && bash /tmp/apibox.sh
+>   curl -fsSL https://cdn.jsdelivr.net/gh/yys9253462-gif/apibox@main/install.sh -o /tmp/apibox.sh && bash /tmp/apibox.sh
 >   ```
 
 ### 非交互快捷命令（适合进阶用户或自动化）
