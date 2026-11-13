@@ -374,6 +374,15 @@ show_all_services_overview() {
   pause_enter
 }
 
+# 注册全局快捷命令 apibox（让小白下次直接敲 apibox 就能打开面板）
+ensure_global_shortcut() {
+  [ "$DRY_RUN" = "1" ] && return 0
+  if [ "$(id -u)" -eq 0 ] && [ -d /usr/local/bin ]; then
+    ln -sf "${SCRIPT_DIR}/install.sh" /usr/local/bin/apibox 2>/dev/null || true
+    chmod +x "${SCRIPT_DIR}/install.sh" 2>/dev/null || true
+  fi
+}
+
 # 项目二级操作菜单
 project_submenu() {
   local idx="$1"
@@ -385,19 +394,30 @@ project_submenu() {
     printf '  %b当前项目：%b%s%b  %b\n' "$C_BOLD" "$C_CYAN" "${REG_NAMES[$idx]}" "$C_RESET" "$(get_project_badge "${REG_IDS[$idx]}")" >&2
     printf '  简介：%s\n' "${REG_DESCS[$idx]}" >&2
     printf '  仓库：%s\n' "${REG_REPOS[$idx]}" >&2
+    if [ -f "${VPS_BASE_DIR}/${REG_IDS[$idx]}/.install.conf" ]; then
+      local SAVED_PORT="" SAVED_DOMAIN=""
+      load_conf_safe "${VPS_BASE_DIR}/${REG_IDS[$idx]}/.install.conf" "SAVED_PORT" "SAVED_DOMAIN" || true
+      local pub_ip
+      pub_ip="$(get_public_ip || echo '服务器IP')"
+      if [ -n "$SAVED_DOMAIN" ]; then
+        printf '  %b访问地址：%bhttps://%s（备用：http://%s:%s）\n' "$C_BOLD" "$C_RESET" "$SAVED_DOMAIN" "$pub_ip" "${SAVED_PORT:-${REG_PORTS[$idx]}}" >&2
+      elif [ -n "$SAVED_PORT" ]; then
+        printf '  %b访问地址：%bhttp://%s:%s\n' "$C_BOLD" "$C_RESET" "$pub_ip" "$SAVED_PORT" >&2
+      fi
+    fi
     print_hr
-    printf '    1) 安装 / 重新配置（支持自动装 Docker 与申请 HTTPS 证书）\n' >&2
+    printf '    1) 安装 / 重新配置（自动装 Docker、开端口、绑域名与 HTTPS）\n' >&2
     printf '    2) 查看运行状态与访问地址\n' >&2
-    printf '    3) 查看实时日志（排查启动异常）\n' >&2
+    printf '    3) 查看实时日志（打不开网页时看这里排查）\n' >&2
     printf '    4) 重启服务\n' >&2
-    printf '    5) 更新到最新镜像\n' >&2
+    printf '    5) 更新到最新版本（保留原有数据）\n' >&2
     printf '    6) 卸载服务\n' >&2
     printf '    9) 返回上级菜单\n' >&2
     printf '    0) 退出脚本\n' >&2
     print_hr
 
     local sub_choice
-    sub_choice="$(ask "请选择操作编号" "1")"
+    sub_choice="$(ask "请输入数字编号" "1")"
     case "$sub_choice" in
       1) project_install || true ; pause_enter ;;
       2) project_status || true ; pause_enter ;;
@@ -406,7 +426,7 @@ project_submenu() {
       5) project_upgrade || true ; pause_enter ;;
       6) project_uninstall || true ; pause_enter ;;
       9) return 0 ;;
-      0) log_info "感谢使用，再见！"; exit 0 ;;
+      0) log_info "感谢使用，下次在终端直接输入 apibox 即可打开菜单！"; exit 0 ;;
       *) log_warn "无效选项 [${sub_choice}]，请输入菜单中的数字编号。" ;;
     esac
   done
@@ -414,32 +434,33 @@ project_submenu() {
 
 # 主交互菜单
 main_menu() {
+  ensure_global_shortcut
   # 首屏人话欢迎语
   printf '\n' >&2
   printf '%b%b============================================================%b\n' "$C_BOLD" "$C_CYAN" "$C_RESET" >&2
-  printf '%b%b        VPS 反代项目一键部署与管理工具 (v1.0)               %b\n' "$C_BOLD" "$C_CYAN" "$C_RESET" >&2
+  printf '%b%b        ApiBox — VPS 反代项目一键部署工具 (v1.0)           %b\n' "$C_BOLD" "$C_CYAN" "$C_RESET" >&2
   printf '%b%b============================================================%b\n' "$C_BOLD" "$C_CYAN" "$C_RESET" >&2
-  printf '  面向新手设计：自动检测系统环境、安装 Docker、分配空闲端口、\n' >&2
-  printf '  配置反向代理并免费申请/自动续期 Let'\''s Encrypt HTTPS 证书。\n' >&2
-  printf '  全程约需 1-3 分钟，拿不准的提示直接按回车使用默认值即可。\n' >&2
+  printf '  专为新手打造：全程中文引导，自动装 Docker、自动避让端口、\n' >&2
+  printf '  支持绑定域名并自动申请/续期免费 HTTPS 安全证书。\n' >&2
+  printf '  安装大约需要 1-3 分钟，拿不准的问题直接按回车用默认值即可。\n' >&2
 
   local need_redraw=1
   while true; do
     if [ "$need_redraw" -eq 1 ]; then
       print_system_banner
-      printf '  %b请选择要安装或管理的反代项目：%b\n\n' "$C_BOLD" "$C_RESET" >&2
+      printf '  %b请选择要安装或管理的项目：%b\n\n' "$C_BOLD" "$C_RESET" >&2
 
       local i num
       for ((i = 0; i < ${#REG_IDS[@]}; i++)); do
         num=$((i + 1))
-        printf '    %d) %-12s %b  - %s\n' \
-          "$num" "${REG_NAMES[$i]}" "$(get_project_badge "${REG_IDS[$i]}")" "${REG_DESCS[$i]}" >&2
+        printf '    %d) %-11s %b  [默认端口:%s] - %s\n' \
+          "$num" "${REG_NAMES[$i]}" "$(get_project_badge "${REG_IDS[$i]}")" "${REG_PORTS[$i]}" "${REG_DESCS[$i]}" >&2
       done
 
-      printf '\n  %b系统辅助功能：%b\n' "$C_BOLD" "$C_RESET" >&2
-      printf '    88) 单独检查 / 自动安装 Docker 与 Compose 环境\n' >&2
-      printf '    89) 查看已占用端口与所有反代容器总览\n' >&2
-      printf '     0) 退出脚本\n' >&2
+      printf '\n  %b常用系统工具：%b\n' "$C_BOLD" "$C_RESET" >&2
+      printf '    88) 单独检查 / 自动安装 Docker 环境\n' >&2
+      printf '    89) 查看已占用端口与运行中的容器\n' >&2
+      printf '     0) 退出（以后可随时输入 apibox 重新打开本菜单）\n' >&2
       print_hr
       need_redraw=0
     fi

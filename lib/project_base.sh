@@ -60,13 +60,22 @@ base_project_install() {
   fi
 
   # 第 1 步：基础依赖与 Docker 就绪
-  log_step 1 5 "检查系统依赖与 Docker 容器环境"
+  log_step 1 5 "检查系统依赖与容器环境"
+  if [ "$DRY_RUN" != "1" ] && [ -r /proc/meminfo ]; then
+    local mem_kb swap_kb
+    mem_kb="$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)"
+    swap_kb="$(awk '/^SwapTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)"
+    if [ "${mem_kb:-0}" -gt 0 ] && [ "${mem_kb:-0}" -lt 1200000 ] && [ "${swap_kb:-0}" -lt 100000 ]; then
+      log_warn "检测到当前服务器内存较小（约 $((mem_kb / 1024)) MB）且未开启虚拟内存（Swap），若运行卡顿可执行以下命令快速开启 1G Swap："
+      printf '  %bfallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile%b\n' "$C_GREEN" "$C_RESET" >&2
+    fi
+  fi
   ensure_base_deps
   ensure_docker_ready || return 1
   ensure_proxy_network "$PROXY_NET_NAME"
 
   # 第 2 步：配置服务端口（冲突自动推荐空闲端口）
-  log_step 2 5 "配置服务访问端口"
+  log_step 2 5 "设置网页访问端口"
   local target_port="${CLI_PORT:-${SAVED_PORT:-$PROJ_DEFAULT_HOST_PORT}}"
   if [ "$target_port" = "auto" ]; then
     target_port="$(pick_free_port "$PROJ_DEFAULT_HOST_PORT")" || die "未能找到 65000 以下的可用空闲端口，请手动释放端口后重试。"
@@ -86,7 +95,7 @@ base_project_install() {
 
   if [ -z "${CLI_PORT:-}" ]; then
     while true; do
-      target_port="$(ask "请输入 ${PROJ_NAME} 宿主机监听端口" "$target_port")"
+      target_port="$(ask "请输入 ${PROJ_NAME} 网页访问端口（不懂直接按回车）" "$target_port")"
       if ! is_valid_port "$target_port"; then
         log_warn "端口必须是 1 到 65535 之间的纯数字（不能以 0 开头）。"
         [ "$ASSUME_YES" = "1" ] || [ ! -t 0 ] && die "非交互模式下默认端口无效: ${target_port}"
@@ -102,10 +111,10 @@ base_project_install() {
       break
     done
   fi
-  log_ok "已选定服务端口: ${target_port}"
+  log_ok "已选定访问端口: ${target_port}"
 
   # 第 3 步：配置域名与 HTTPS 证书
-  log_step 3 5 "配置域名与 HTTPS（Let's Encrypt 免费证书）"
+  log_step 3 5 "配置域名与 HTTPS 安全锁（可选）"
   local domain="" email="" use_domain=0
 
   if [ "${CLI_NO_DOMAIN:-0}" = "1" ]; then
@@ -117,9 +126,18 @@ base_project_install() {
   else
     local default_yn="n"
     [ -n "$SAVED_DOMAIN" ] && default_yn="y"
-    if ask_yn "是否绑定域名并自动申请免费 HTTPS 证书？（选 n 可先用 IP:端口 访问）" "$default_yn"; then
+    if ask_yn "是否绑定自己的域名并开启 HTTPS 安全访问？（选 n 可先用 IP:端口 打开）" "$default_yn"; then
+      if [ "$DRY_RUN" != "1" ]; then
+        local pre_mode
+        pre_mode="$(detect_proxy_mode)"
+        case "$pre_mode" in
+          conflict:*)
+            log_warn "提示：本机 80/443 端口当前已被 [${pre_mode#conflict:}] 占用，绑定后将为您生成手动接入配置。"
+            ;;
+        esac
+      fi
       while true; do
-        domain="$(ask "请输入已解析到本机的域名（如 ${PROJ_ID}.example.com）" "$SAVED_DOMAIN")"
+        domain="$(ask "请输入已解析到本机的域名（如 ${PROJ_ID}.example.com，直接回车可跳过）" "$SAVED_DOMAIN")"
         if [ -z "$domain" ]; then
           log_info "未输入域名，将改为仅使用 IP + 端口访问。"
           use_domain=0
@@ -148,7 +166,7 @@ base_project_install() {
   fi
 
   # 第 4 步：生成配置并拉起容器
-  log_step 4 5 "生成配置并拉取启动 ${PROJ_NAME} 容器"
+  log_step 4 5 "下载程序镜像并启动 ${PROJ_NAME} 服务"
   local image="${CLI_IMAGE:-${SAVED_IMAGE:-$PROJ_DEFAULT_IMAGE}}"
   local compose_bak=""
   if [ "$DRY_RUN" != "1" ]; then
@@ -162,6 +180,7 @@ base_project_install() {
   project_write_compose "$app_dir" "$target_port" "$image"
 
   if [ "$DRY_RUN" != "1" ]; then
+    log_info "正在下载程序本体并启动（首次约需 1-3 分钟，屏幕可能暂不动，请勿关闭窗口）..."
     local out
     if ! out="$(compose_cmd "$compose_file" pull 2>&1)" ; then
       log_warn "镜像拉取过程有提示信息，尝试继续启动..."
@@ -228,6 +247,12 @@ base_project_install() {
   fi
   printf '  %b查看运行日志%b : %bdocker logs -f --tail 100 %s%b\n' "$C_BOLD" "$C_RESET" "$C_GREEN" "$PROJ_CONTAINER_NAME" "$C_RESET" >&2
   printf '  %b重启服务命令%b : %bdocker compose -f %s restart%b\n' "$C_BOLD" "$C_RESET" "$C_GREEN" "$compose_file" "$C_RESET" >&2
+  printf '  %b快捷管理菜单%b : 下次在终端直接输入 %bapibox%b 即可打开本面板\n' "$C_BOLD" "$C_RESET" "$C_GREEN" "$C_RESET" >&2
+  if [ -n "$final_domain" ]; then
+    printf '  %b打不开怎么办%b : 请确保云厂商控制台「安全组/防火墙」已放行 TCP 80 与 443 端口\n' "$C_BOLD" "$C_RESET" >&2
+  else
+    printf '  %b打不开怎么办%b : 请确保云厂商控制台「安全组/防火墙」已放行 TCP %s 端口\n' "$C_BOLD" "$C_RESET" "$target_port" >&2
+  fi
   print_hr
 }
 

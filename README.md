@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/yys9253462-gif/apibox/main/install.
 
 > **说明**：
 > - 无需提前安装 `git` 或 `Docker`，脚本会自动下载完整组件到 `/opt/apibox` 并打开中文交互菜单。
-> - 以后需要更新脚本或再次打开菜单，直接执行 `bash /opt/apibox/install.sh`（或重新粘贴上面那条命令）即可。
+> - 首次运行后会自动注册全局命令 `apibox`，**以后随时在服务器终端输入 `apibox` 即可打开菜单**（或重新执行上面那条命令更新到最新版）。
 > - **备用加速源（CDN）**（若上方 GitHub 直连较慢或不通，可改用）：
 >   ```bash
 >   curl -fsSL https://cdn.jsdelivr.net/gh/yys9253462-gif/apibox@main/install.sh -o /tmp/apibox.sh && bash /tmp/apibox.sh
