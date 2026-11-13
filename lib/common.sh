@@ -61,22 +61,22 @@ _write_log() {
 
 log_info() {
   _write_log "信息" "$*"
-  printf "${C_CYAN}[信息]${C_RESET} %s\n" "$*" >&2
+  printf '%b[信息]%b %s\n' "$C_CYAN" "$C_RESET" "$*" >&2
 }
 
 log_ok() {
   _write_log "成功" "$*"
-  printf "${C_GREEN}[成功]${C_RESET} %s\n" "$*" >&2
+  printf '%b[成功]%b %s\n' "$C_GREEN" "$C_RESET" "$*" >&2
 }
 
 log_warn() {
   _write_log "警告" "$*"
-  printf "${C_YELLOW}[警告]${C_RESET} %s\n" "$*" >&2
+  printf '%b[警告]%b %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2
 }
 
 log_err() {
   _write_log "错误" "$*"
-  printf "${C_RED}[错误]${C_RESET} %s\n" "$*" >&2
+  printf '%b[错误]%b %s\n' "$C_RED" "$C_RESET" "$*" >&2
 }
 
 log_step() {
@@ -84,7 +84,7 @@ log_step() {
   local total="$2"
   local title="$3"
   _write_log "步骤" "($current/$total) $title"
-  printf "\n${C_BOLD}${C_BLUE}==> [%s/%s] %s${C_RESET}\n" "$current" "$total" "$title" >&2
+  printf '\n%b%b==> [%s/%s] %s%b\n' "$C_BOLD" "$C_BLUE" "$current" "$total" "$title" "$C_RESET" >&2
 }
 
 print_hr() {
@@ -99,7 +99,7 @@ die() {
 # 命令执行包装器：演练模式（--dry-run）下仅打印即将执行的命令，不做实际写入
 run_cmd() {
   if [ "$DRY_RUN" = "1" ]; then
-    printf "${C_YELLOW}[演练模式]${C_RESET} 将执行: %s\n" "$*" >&2
+    printf '%b[演练模式]%b 将执行: %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2
     _write_log "演练" "$*"
     return 0
   fi
@@ -299,14 +299,26 @@ gen_secret() {
   fi
 }
 
-# 校验端口号是否合法（1-65535 的纯数字）
+# 校验端口号是否合法（1-65535，禁止前导零）
 is_valid_port() {
   local p="$1"
-  [[ "$p" =~ ^[0-9]+$ ]] && [ "$p" -ge 1 ] && [ "$p" -le 65535 ]
+  [[ "$p" =~ ^[1-9][0-9]*$ ]] && [ "$p" -ge 1 ] && [ "$p" -le 65535 ]
 }
 
 # 校验域名格式是否合法
 is_valid_domain() {
   local d="$1"
   [[ "$d" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]
+}
+
+# 域名转小写规范化
+normalize_domain() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+# 校验邮箱格式（空串视为跳过，非空需符合基础邮箱格式）
+is_valid_email() {
+  local e="$1"
+  [ -z "$e" ] && return 0
+  [[ "$e" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]
 }

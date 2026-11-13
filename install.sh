@@ -85,6 +85,39 @@ source "${SCRIPT_DIR}/lib/system.sh"
 source "${SCRIPT_DIR}/lib/docker.sh"
 # shellcheck source=lib/ssl.sh
 source "${SCRIPT_DIR}/lib/ssl.sh"
+# shellcheck source=lib/project_base.sh
+source "${SCRIPT_DIR}/lib/project_base.sh"
+
+# 全局实例互斥锁（防止多终端并发改写共享 Caddyfile 或状态文件）
+APIBOX_LOCK_FILE="/tmp/apibox-installer.lock"
+APIBOX_LOCK_DIR="/tmp/apibox-installer.lock.d"
+_LOCK_HELD_MODE=""
+
+acquire_instance_lock() {
+  [ "$DRY_RUN" = "1" ] && return 0
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"$APIBOX_LOCK_FILE"
+    if ! flock -n 9; then
+      die "检测到另一个 ApiBox 安装/管理进程正在运行，请等待其结束后再试。"
+    fi
+    _LOCK_HELD_MODE="flock"
+  else
+    if ! mkdir "$APIBOX_LOCK_DIR" 2>/dev/null; then
+      die "检测到另一个 ApiBox 安装/管理进程正在运行（锁目录 ${APIBOX_LOCK_DIR}），若确认无进程运行可手动删除该锁目录。"
+    fi
+    _LOCK_HELD_MODE="mkdir"
+  fi
+  trap release_instance_lock EXIT
+}
+
+release_instance_lock() {
+  if [ "$_LOCK_HELD_MODE" = "flock" ]; then
+    flock -u 9 2>/dev/null || true
+    exec 9>&- 2>/dev/null || true
+  elif [ "$_LOCK_HELD_MODE" = "mkdir" ]; then
+    rmdir "$APIBOX_LOCK_DIR" 2>/dev/null || true
+  fi
+}
 
 # 命令行参数变量
 CLI_PROJECT=""
@@ -169,6 +202,7 @@ parse_args() {
         ;;
       --email)
         [ -n "${2:-}" ] || die "参数 --email 缺少邮箱"
+        is_valid_email "$2" || die "邮箱格式不合法: $2"
         CLI_EMAIL="$2"
         shift 2
         ;;
@@ -302,9 +336,10 @@ show_all_services_overview() {
   if [ -z "$ports_info" ]; then
     printf "    （暂无）\n" >&2
   else
-    local p
+    local p owner
     for p in $ports_info; do
-      printf "    端口 %-6s -> %s\n" "$p" "$(describe_port_owner "$p")" >&2
+      owner="$(describe_port_owner "$p")"
+      printf "    端口 %-6s -> %s\n" "$p" "${owner:-未知进程}" >&2
     done
   fi
   printf "\n  ${C_BOLD}已部署的反代容器：${C_RESET}\n" >&2
@@ -429,6 +464,9 @@ main() {
     load_project_module "$idx"
     local act="${CLI_ACTION:-install}"
     case "$act" in
+      install|restart|upgrade|uninstall) acquire_instance_lock ;;
+    esac
+    case "$act" in
       install)   project_install ;;
       status)    project_status ;;
       logs)      project_logs ;;
@@ -448,6 +486,7 @@ main() {
     exit 1
   fi
 
+  acquire_instance_lock
   main_menu
 }
 

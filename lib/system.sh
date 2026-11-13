@@ -152,15 +152,25 @@ ensure_base_deps() {
 get_used_ports() {
   {
     if command -v ss >/dev/null 2>&1; then
-      ss -ltnH 2>/dev/null | awk '{print $4}' | sed 's/.*://'
+      ss -ltn 2>/dev/null | awk 'NR>1{print $4}' | sed 's/.*://'
     elif command -v netstat >/dev/null 2>&1; then
       netstat -ltn 2>/dev/null | awk 'NR>2{print $4}' | sed 's/.*://'
     fi
-    if command -v docker >/dev/null 2>&1; then
+    if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
       docker ps --format '{{.Ports}}' 2>/dev/null | tr ',' '\n' \
         | sed -n 's/.*:\([0-9][0-9]*\)->.*/\1/p'
     fi
-  } | grep -E '^[0-9]+$' | sort -nu
+  } | grep -E '^[0-9]+$' | sort -nu || true
+}
+
+# 一次性获取 iptables NAT PREROUTING 中可能劫持 TCP 端口的区间
+get_nat_reserved_ranges() {
+  if command -v iptables >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
+    iptables -t nat -S PREROUTING 2>/dev/null | awk '
+      /-p udp/ { next }
+      match($0, /--dport ([0-9]+):([0-9]+)/, m) { print m[1]"-"m[2]; next }
+      match($0, /--dport ([0-9]+) /, m)          { print m[1]"-"m[1] }' || true
+  fi
 }
 
 # 检查单个端口是否被占用或落在 iptables NAT 劫持区间内
@@ -168,49 +178,49 @@ get_used_ports() {
 is_port_in_use() {
   local target_port="$1"
   local used_list="${2:-}"
+  local nat_ranges="${3:-__UNSET__}"
   [ -z "$used_list" ] && used_list="$(get_used_ports)"
 
-  if printf '%s\n' "$used_list" | grep -qx "$target_port"; then
+  if [ -n "$used_list" ] && printf '%s\n' "$used_list" | grep -qx "$target_port"; then
     return 0
   fi
 
-  # 检查 iptables PREROUTING NAT 端口区间劫持（如端口跳跃服务）
-  if command -v iptables >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
-    local ranges range start_p end_p
-    ranges="$(iptables -t nat -S PREROUTING 2>/dev/null | awk '
-      match($0, /--dport ([0-9]+):([0-9]+)/, m) { print m[1]"-"m[2] }
-      match($0, /--dport ([0-9]+) /, m)          { print m[1]"-"m[1] }' || true)"
-    for range in $ranges; do
-      start_p="${range%-*}"
-      end_p="${range#*-}"
-      if [ "$target_port" -ge "$start_p" ] && [ "$target_port" -le "$end_p" ]; then
-        return 0
-      fi
-    done
+  if [ "$nat_ranges" = "__UNSET__" ]; then
+    nat_ranges="$(get_nat_reserved_ranges)"
   fi
+
+  local range start_p end_p
+  for range in $nat_ranges; do
+    start_p="${range%-*}"
+    end_p="${range#*-}"
+    if [ "$target_port" -ge "$start_p" ] && [ "$target_port" -le "$end_p" ]; then
+      return 0
+    fi
+  done
   return 1
 }
 
-# 查看某个端口被哪个进程或容器占用（用于友好提示）
+# 查看某个端口被哪个进程或容器占用（未检测到时返回空串，由调用方按需兜底）
 describe_port_owner() {
   local port="$1"
   local owner=""
   if command -v ss >/dev/null 2>&1; then
-    owner="$(ss -ltnpH "sport = :$port" 2>/dev/null | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -1 || true)"
+    owner="$(ss -ltnp 2>/dev/null | awk -v p=":${port}$" 'NR>1 && $4 ~ p {print; exit}' | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -1 || true)"
   fi
-  if [ -z "$owner" ] && command -v docker >/dev/null 2>&1; then
+  if [ -z "$owner" ] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     owner="$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -E ":${port}->" | awk '{print "容器:"$1}' | head -1 || true)"
   fi
-  printf '%s' "${owner:-未知进程}"
+  printf '%s' "$owner"
 }
 
-# 从指定起始端口自动挑选一个空闲端口
+# 从指定起始端口自动挑选一个空闲端口（所有端口列表与 NAT 区间均在循环外一次性缓存）
 pick_free_port() {
   local candidate="${1:-8080}"
-  local used_list
+  local used_list nat_ranges
   used_list="$(get_used_ports)"
+  nat_ranges="$(get_nat_reserved_ranges)"
   while [ "$candidate" -le 65000 ]; do
-    if ! is_port_in_use "$candidate" "$used_list"; then
+    if ! is_port_in_use "$candidate" "$used_list" "$nat_ranges"; then
       printf '%s' "$candidate"
       return 0
     fi

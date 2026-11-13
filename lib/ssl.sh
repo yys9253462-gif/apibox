@@ -82,9 +82,9 @@ check_domain_dns() {
 # 探测 80/443 端口归属形态
 # 输出之一：self（空闲，使用内置 Caddy）| host_caddy（宿主机 Caddy）| self_caddy（本脚本已托管的 Caddy）| conflict:<进程名>
 detect_proxy_mode() {
+  local caddy_exists=0
   if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$CADDY_CONTAINER_NAME"; then
-    printf 'self_caddy'
-    return 0
+    caddy_exists=1
   fi
 
   local p80_in_use=0 p443_in_use=0
@@ -93,15 +93,26 @@ detect_proxy_mode() {
   is_port_in_use 80 "$used_list" && p80_in_use=1
   is_port_in_use 443 "$used_list" && p443_in_use=1
 
-  if [ "$p80_in_use" -eq 0 ] && [ "$p443_in_use" -eq 0 ]; then
-    printf 'self'
-    return 0
-  fi
-
   local owner80 owner443 owner
   owner80="$(describe_port_owner 80)"
   owner443="$(describe_port_owner 443)"
   owner="${owner80:-$owner443}"
+
+  if [ "$caddy_exists" -eq 1 ]; then
+    # 如果 80/443 已被非 vps-proxy-caddy 的其它进程抢占，不能盲目返回 self_caddy
+    if { [ "$p80_in_use" -eq 1 ] && [ -n "$owner80" ] && [ "$owner80" != "容器:${CADDY_CONTAINER_NAME}" ]; } || \
+       { [ "$p443_in_use" -eq 1 ] && [ -n "$owner443" ] && [ "$owner443" != "容器:${CADDY_CONTAINER_NAME}" ]; }; then
+      printf 'conflict:%s' "${owner:-未知服务}"
+      return 0
+    fi
+    printf 'self_caddy'
+    return 0
+  fi
+
+  if [ "$p80_in_use" -eq 0 ] && [ "$p443_in_use" -eq 0 ]; then
+    printf 'self'
+    return 0
+  fi
 
   if printf '%s %s' "$owner80" "$owner443" | grep -qi "caddy" && [ -f /etc/caddy/Caddyfile ]; then
     printf 'host_caddy'
@@ -109,6 +120,31 @@ detect_proxy_mode() {
   fi
 
   printf 'conflict:%s' "${owner:-未知服务}"
+}
+
+# 检查域名是否已被其他项目占用（排除当前项目自身的标记块）
+check_caddy_domain_conflict() {
+  local cfg_file="$1"
+  local project_id="$2"
+  local domain="$3"
+  [ -f "$cfg_file" ] || return 0
+
+  local start_mark="# >>> vps-proxy:${project_id} >>>"
+  local end_mark="# <<< vps-proxy:${project_id} <<<"
+  local hit
+  hit="$(awk -v s="$start_mark" -v e="$end_mark" -v d="$domain" '
+    $0 == s { skip=1; next }
+    $0 == e { skip=0; next }
+    skip { next }
+    /^[[:space:]]*#/ { next }
+    $1 == d && $2 == "{" { print $0; exit }
+  ' "$cfg_file")"
+
+  if [ -n "$hit" ]; then
+    log_err "域名 [${domain}] 已被其他站点或项目配置占用（${cfg_file}），请更换其他域名或子域名。"
+    return 1
+  fi
+  return 0
 }
 
 # 按标记块移除 Caddyfile 中的指定项目配置（幂等）
@@ -263,7 +299,8 @@ EOF
 # 用法：configure_domain_ssl "project_id" "domain" "upstream_container_port" "app_host_port" "email"
 configure_domain_ssl() {
   local project_id="$1"
-  local domain="$2"
+  local domain
+  domain="$(normalize_domain "$2")"
   local upstream="$3"
   local app_host_port="$4"
   local email="${5:-}"
@@ -276,6 +313,7 @@ configure_domain_ssl() {
       ensure_self_caddy_files
       local caddyfile="${CADDY_DATA_DIR}/Caddyfile"
       if [ "$DRY_RUN" != "1" ]; then
+        check_caddy_domain_conflict "$caddyfile" "$project_id" "$domain" || return 1
         cp "$caddyfile" "${caddyfile}.bak" 2>/dev/null || true
         strip_caddy_block "$caddyfile" "$project_id"
         build_caddy_site_block "$project_id" "$domain" "$upstream" "$email" >> "$caddyfile"
@@ -298,6 +336,8 @@ configure_domain_ssl() {
         log_info "[演练模式] 将备份 ${host_cfg} 并追加 ${domain} -> 127.0.0.1:${app_host_port}"
         return 0
       fi
+
+      check_caddy_domain_conflict "$host_cfg" "$project_id" "$domain" || return 1
 
       trap _on_ssl_interrupt INT TERM
       cp "$host_cfg" "$bak_file"
@@ -381,10 +421,20 @@ remove_domain_ssl() {
   local self_cfg="${CADDY_DATA_DIR}/Caddyfile"
   if [ -f "$self_cfg" ] && grep -q "# >>> vps-proxy:${project_id} >>>" "$self_cfg" 2>/dev/null; then
     strip_caddy_block "$self_cfg" "$project_id"
-    if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CADDY_CONTAINER_NAME"; then
-      docker exec "$CADDY_CONTAINER_NAME" caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true
+    if ! grep -q "# >>> vps-proxy:" "$self_cfg" 2>/dev/null; then
+      # 已无任何托管站点，停止并回收闲置的内置 Caddy 容器以释放 80/443 端口
+      if [ -f "${CADDY_DATA_DIR}/docker-compose.yml" ]; then
+        compose_cmd "${CADDY_DATA_DIR}/docker-compose.yml" down >/dev/null 2>&1 || true
+      elif docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$CADDY_CONTAINER_NAME"; then
+        docker rm -f "$CADDY_CONTAINER_NAME" >/dev/null 2>&1 || true
+      fi
+      log_ok "已清理 [${project_id}] 反代配置，并自动回收闲置的内置 Caddy 容器以释放 80/443 端口。"
+    else
+      if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CADDY_CONTAINER_NAME"; then
+        docker exec "$CADDY_CONTAINER_NAME" caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true
+      fi
+      log_ok "已清理内置 Caddy 中 [${project_id}] 的域名反代配置。"
     fi
-    log_ok "已清理内置 Caddy 中 [${project_id}] 的域名反代配置。"
   fi
 
   local host_cfg="/etc/caddy/Caddyfile"
