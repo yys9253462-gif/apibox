@@ -40,15 +40,21 @@
 
 ---
 
-## 快速开始
+## 快速开始（一条命令直接用）
 
-登录到您的 **VPS 服务器终端**，复制以下整段命令粘贴执行（不建议直接用管道运行，避免部分精简系统缺少 `sudo` 或无法响应键盘输入）：
+登录到您的 **VPS 服务器终端**（建议使用 `root` 用户，若为普通用户请先执行 `su -` 或 `sudo -i`），**直接复制下面这一条命令粘贴回车**：
 
 ```bash
-git clone https://github.com/yys9253462-gif/apibox.git /opt/apibox && bash /opt/apibox/install.sh
+curl -fsSL https://cdn.jsdelivr.net/gh/yys9253462-gif/apibox@main/install.sh -o /tmp/apibox.sh && bash /tmp/apibox.sh
 ```
 
-> 若服务器尚未安装 `git` 或您使用非 root 用户，请先执行 `su -` 切换为 root（或前面加 `sudo`），若缺少 git 可先安装：`apt-get update && apt-get install -y git`（Debian/Ubuntu）或 `dnf install -y git`（CentOS/Rocky）。
+> **说明**：
+> - 无需提前安装 `git` 或 `Docker`，脚本会自动下载完整组件到 `/opt/apibox` 并打开中文交互菜单。
+> - 以后需要更新脚本或再次打开菜单，直接执行 `bash /opt/apibox/install.sh`（或重新粘贴上面那条命令）即可。
+> - **备用源**（若上方 CDN 访问较慢，可改用 GitHub 直连）：
+>   ```bash
+>   curl -fsSL https://raw.githubusercontent.com/yys9253462-gif/apibox/main/install.sh -o /tmp/apibox.sh && bash /tmp/apibox.sh
+>   ```
 
 ### 非交互快捷命令（适合进阶用户或自动化）
 

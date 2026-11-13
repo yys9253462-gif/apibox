@@ -8,13 +8,72 @@ set -euo pipefail
 
 # 定位脚本所在目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_OWNER="yys9253462-gif"
+REPO_NAME="apibox"
+REPO_BRANCH="main"
+APIBOX_HOME="${APIBOX_HOME:-/opt/apibox}"
 
-# 校验关键库文件是否存在；若通过单文件下载运行则引导完整克隆
+# 自举引导：当用户通过「一条命令」单文件下载运行时，自动拉取完整仓库到 /opt/apibox
+_bootstrap_full_repo() {
+  echo "[信息] 正在初始化 ApiBox 运行环境（首次约需 5-10 秒）..." >&2
+
+  # 确保 curl 与 tar 可用（兼容最精简系统，无需提前安装 git）
+  if ! command -v curl >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1; then
+    if [ "$(id -u)" -eq 0 ]; then
+      if command -v apt-get >/dev/null 2>&1; then
+        DEBIAN_FRONTEND=noninteractive apt-get update -qq && apt-get install -y -qq curl ca-certificates tar
+      elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y -q curl ca-certificates tar
+      elif command -v yum >/dev/null 2>&1; then
+        yum install -y -q curl ca-certificates tar
+      elif command -v apk >/dev/null 2>&1; then
+        apk add --no-cache curl ca-certificates tar bash
+      fi
+    else
+      echo "[错误] 当前缺少 curl 或 tar，且非 root 用户。请先切换 root（su -）或安装 curl tar。" >&2
+      exit 1
+    fi
+  fi
+
+  local tmp_tgz="/tmp/apibox-${REPO_BRANCH}.tar.gz"
+  local tmp_extract="/tmp/apibox-extract-$$"
+  rm -rf "$tmp_extract"
+  mkdir -p "$tmp_extract" "$APIBOX_HOME"
+
+  local tar_url="https://codeload.github.com/${REPO_OWNER}/${REPO_NAME}/tar.gz/refs/heads/${REPO_BRANCH}"
+  if ! curl -fsSL --proto '=https' --tlsv1.2 --max-time 30 "$tar_url" -o "$tmp_tgz"; then
+    echo "[错误] 下载 ApiBox 安装包失败，请检查服务器能否访问 GitHub。" >&2
+    rm -rf "$tmp_tgz" "$tmp_extract"
+    exit 1
+  fi
+
+  if [ ! -s "$tmp_tgz" ] || ! tar -xzf "$tmp_tgz" -C "$tmp_extract"; then
+    echo "[错误] 解压 ApiBox 安装包失败。" >&2
+    rm -rf "$tmp_tgz" "$tmp_extract"
+    exit 1
+  fi
+
+  local top_dir
+  top_dir="$(find "$tmp_extract" -maxdepth 1 -mindepth 1 -type d | head -1)"
+  if [ -z "$top_dir" ] || [ ! -f "${top_dir}/install.sh" ]; then
+    echo "[错误] 安装包结构异常，未找到主程序。" >&2
+    rm -rf "$tmp_tgz" "$tmp_extract"
+    exit 1
+  fi
+
+  cp -a "${top_dir}/." "${APIBOX_HOME}/"
+  chmod +x "${APIBOX_HOME}/install.sh" "${APIBOX_HOME}"/lib/*.sh "${APIBOX_HOME}"/projects/*.sh 2>/dev/null || true
+  rm -rf "$tmp_tgz" "$tmp_extract"
+
+  # 若用户通过管道 (curl | bash) 执行，尝试把 stdin 接回控制终端
+  if [ ! -t 0 ] && (exec 3</dev/tty) 2>/dev/null; then
+    exec bash "${APIBOX_HOME}/install.sh" "$@" </dev/tty
+  fi
+  exec bash "${APIBOX_HOME}/install.sh" "$@"
+}
+
 if [ ! -f "${SCRIPT_DIR}/lib/common.sh" ] || [ ! -f "${SCRIPT_DIR}/projects.conf" ]; then
-  echo "[提示] 当前目录缺少公共函数库（lib/）或项目清单（projects.conf）。" >&2
-  echo "请使用以下命令完整克隆仓库后运行：" >&2
-  echo "  git clone https://github.com/yys9253462-gif/apibox.git /opt/apibox && bash /opt/apibox/install.sh" >&2
-  exit 1
+  _bootstrap_full_repo "$@"
 fi
 
 # 加载公共函数库
