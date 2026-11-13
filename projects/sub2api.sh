@@ -13,6 +13,7 @@ PROJ_DEFAULT_IMAGE="weishaw/sub2api:latest"
 PROJ_INNER_PORT="8080"
 PROJ_DEFAULT_HOST_PORT="8080"
 PROJ_CONTAINER_NAME="vps-proxy-sub2api"
+PROJ_APP_SERVICE="sub2api"
 PROJ_POSTGRES_CONTAINER="vps-proxy-sub2api-postgres"
 PROJ_REDIS_CONTAINER="vps-proxy-sub2api-redis"
 PROJ_POSTGRES_IMAGE="postgres:18-alpine"
@@ -72,7 +73,6 @@ project_write_env() {
     _sub2api_ensure_env_line "$env_file" "REDIS_PASSWORD" "$(gen_secret 24)"
     _sub2api_ensure_env_line "$env_file" "JWT_SECRET" "$(gen_secret 32)"
     _sub2api_ensure_env_line "$env_file" "TOTP_ENCRYPTION_KEY" "$(gen_secret 32)"
-    _sub2api_ensure_env_line "$env_file" "ADMIN_EMAIL" "admin@localhost"
     _sub2api_ensure_env_line "$env_file" "ADMIN_PASSWORD" "$(gen_secret 8)"
     chmod 600 "$env_file"
     return 0
@@ -84,10 +84,9 @@ project_write_env() {
   jwt_secret="$(gen_secret 32)"
   totp_key="$(gen_secret 32)"
   admin_pass="$(gen_secret 8)"
-  admin_email="${CLI_EMAIL:-${SAVED_EMAIL:-}}"
-  if [ -z "$admin_email" ] || ! is_valid_email "$admin_email"; then
-    admin_email="admin@localhost"
-  fi
+  # 证书邮箱是 Let's Encrypt 的联系邮箱，不是管理员登录名，不能拿来当 ADMIN_EMAIL。
+  # 官方明确不建议用固定的知名邮箱，留空时应用会自己生成并写进首次启动日志。
+  admin_email=""
 
   cat > "$env_file" <<EOF
 # Sub2API 环境变量（由 apibox 按官方部署自动生成，请勿把本文件提交到仓库）
@@ -119,9 +118,9 @@ project_write_compose() {
   fi
 
   mkdir -p "${app_dir}/data" "${app_dir}/postgres" "${app_dir}/redis"
-  # 官方镜像里 postgres 与 redis 都不以 root 跑，挂载目录要先给它们写权限
-  chown 70:70 "${app_dir}/postgres" 2>/dev/null || true
-  chown 999:999 "${app_dir}/redis" 2>/dev/null || true
+  # postgres 官方镜像里的用户是 999。70 是 Debian 宿主机的 postgres 用户，
+  # 写错后容器里的 postgres 对挂载目录没有写权限，初始化会直接失败。
+  chown 999:999 "${app_dir}/postgres" "${app_dir}/redis" 2>/dev/null || true
 
   # 定界符加引号，脚本不展开 ${}。端口和镜像名用占位符，写完再替换。
   # 密钥留在文件里，由 docker compose 启动时从同目录 .env 读入。
@@ -153,7 +152,7 @@ services:
       REDIS_PORT: "6379"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
       REDIS_DB: "0"
-      ADMIN_EMAIL: "${ADMIN_EMAIL:-admin@localhost}"
+      ADMIN_EMAIL: "${ADMIN_EMAIL:-}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       JWT_SECRET: "${JWT_SECRET:-}"
       TOTP_ENCRYPTION_KEY: "${TOTP_ENCRYPTION_KEY:-}"
@@ -218,15 +217,23 @@ EOF
     -v pg_container="$PROJ_POSTGRES_CONTAINER" \
     -v redis_image="$PROJ_REDIS_IMAGE" \
     -v redis_container="$PROJ_REDIS_CONTAINER" '
+    function put(token, value,    at) {
+      # sub/gsub 的替换文本里 & 表示整个匹配，镜像名里的 & 会被写坏。按位置拼接不受影响。
+      at = index($0, token)
+      if (at > 0) {
+        $0 = substr($0, 1, at - 1) value substr($0, at + length(token))
+      }
+    }
     {
-      gsub(/__APIBOX_IMAGE__/, image)
-      gsub(/__APIBOX_APP_CONTAINER__/, app_container)
-      gsub(/__APIBOX_HOST_PORT__/, host_port)
-      gsub(/__APIBOX_PROXY_NET__/, proxy_net)
-      gsub(/__APIBOX_POSTGRES_IMAGE__/, pg_image)
-      gsub(/__APIBOX_POSTGRES_CONTAINER__/, pg_container)
-      gsub(/__APIBOX_REDIS_IMAGE__/, redis_image)
-      gsub(/__APIBOX_REDIS_CONTAINER__/, redis_container)
+      put("__APIBOX_IMAGE__", image)
+      put("__APIBOX_APP_CONTAINER__", app_container)
+      put("__APIBOX_HOST_PORT__", host_port)
+      put("__APIBOX_PROXY_NET__", proxy_net)
+      put("__APIBOX_PROXY_NET__", proxy_net)
+      put("__APIBOX_POSTGRES_IMAGE__", pg_image)
+      put("__APIBOX_POSTGRES_CONTAINER__", pg_container)
+      put("__APIBOX_REDIS_IMAGE__", redis_image)
+      put("__APIBOX_REDIS_CONTAINER__", redis_container)
       print
     }
   ' "$compose_file" > "$tmp_compose" \

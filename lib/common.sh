@@ -245,6 +245,14 @@ save_conf_kv() {
     # 剔除换行符，防止破坏键值对格式
     v="${v//$'\n'/}"
     v="${v//$'\r'/}"
+    # 值里的 # 会被读配置时当成整行注释丢掉，反斜杠会在 compose 插值时被吃掉。
+    case "$v" in
+      *'#'*|*'\'*)
+        log_err "配置项 ${k} 的值含有 # 或反斜杠，不能安全写入 ${conf_file}。"
+        rm -f "$tmp_file"
+        return 1
+        ;;
+    esac
     printf '%s=%s\n' "$k" "$v" >> "$tmp_file"
   done
   chmod 600 "$tmp_file" || { rm -f "$tmp_file"; return 1; }

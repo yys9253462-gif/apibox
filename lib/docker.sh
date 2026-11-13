@@ -188,8 +188,10 @@ wait_container_ready() {
     fi
     if [ "$state" = "running" ]; then
       local code
-      code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${port}/" 2>/dev/null || echo '000')"
-      if [ "$code" != "000" ]; then
+      # curl 连不上时，-w 仍会输出 000000，且失败退出码会被 || 吞掉。
+      # 必须同时看退出码，否则探测失败会被当成服务已就绪。
+      if code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${port}/" 2>/dev/null)" \
+         && printf '%s' "$code" | grep -Eq '^[0-9]{3}$' && [ "$code" != "000" ]; then
         log_ok "服务已就绪（HTTP 状态码: ${code}）。"
         return 0
       fi

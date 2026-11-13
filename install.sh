@@ -68,7 +68,9 @@ _bootstrap_full_repo() {
   fi
 
   rm -rf "${APIBOX_HOME}/lib" "${APIBOX_HOME}/projects" "${APIBOX_HOME}/tests"
-  cp -a "${top_dir}/." "${APIBOX_HOME}/"
+  # 不用 cp -a：它会连同属主一起复制。root 解压出的文件属主是 root，
+  # 复制到已有目录时，普通用户再次更新会因为删不掉旧文件而失败。
+  cp -R "${top_dir}/." "${APIBOX_HOME}/"
   chmod +x "${APIBOX_HOME}/install.sh" "${APIBOX_HOME}"/lib/*.sh "${APIBOX_HOME}"/projects/*.sh 2>/dev/null || true
   rm -rf "$tmp_tgz" "$tmp_extract"
 

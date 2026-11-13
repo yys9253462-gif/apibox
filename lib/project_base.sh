@@ -61,6 +61,8 @@ base_project_install() {
 
   # 第 1 步：基础依赖与 Docker 就绪
   log_step 1 5 "检查系统依赖与容器环境"
+  # 命令行安装不经过主菜单，不先识别系统的话，装依赖时包管理器是空的。
+  detect_system_info
   if [ "$DRY_RUN" != "1" ] && [ -r /proc/meminfo ]; then
     local mem_kb swap_kb
     mem_kb="$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)"
@@ -330,8 +332,13 @@ base_project_upgrade() {
       compose_bak="${compose_file}.upgrade.bak.$$"
       cp "$compose_file" "$compose_bak"
       local tmp_c="${compose_file}.tmp.$$"
-      awk -v img="$target_image" '
-        !done && /^[[:space:]]*image:[[:space:]]*/ {
+      local app_service="${PROJ_APP_SERVICE:-$PROJ_ID}"
+      # 只替换应用服务自己的镜像。Sub2API 同一份编排里还有 postgres 与 redis，
+      # 按第一行 image 替换会把数据库镜像换成应用镜像。
+      awk -v img="$target_image" -v svc="$app_service" '
+        $0 ~ "^[[:space:]]*" svc ":[[:space:]]*$" { in_svc=1 }
+        in_svc && /^[[:space:]]{0,2}[^[:space:]]/ && $0 !~ "^[[:space:]]*" svc ":[[:space:]]*$" { in_svc=0 }
+        in_svc && !done && /^[[:space:]]*image:[[:space:]]*/ {
           match($0, /^[[:space:]]*/)
           print substr($0, 1, RLENGTH) "image: " img
           done=1
@@ -339,6 +346,11 @@ base_project_upgrade() {
         }
         { print }
       ' "$compose_file" > "$tmp_c" && mv "$tmp_c" "$compose_file" || { rm -f "$tmp_c" "$compose_bak"; return 1; }
+      if ! grep -q "image: ${target_image}" "$compose_file"; then
+        mv "$compose_bak" "$compose_file"
+        log_err "未在编排里找到 ${app_service} 的镜像行，已恢复原文件。"
+        return 1
+      fi
     fi
     if ! compose_cmd "$compose_file" pull; then
       log_err "拉取新镜像失败，已保留原运行容器未做改动。"
@@ -350,8 +362,12 @@ base_project_upgrade() {
       log_err "新版本启动或探活失败！正在尝试自动回滚到升级前版本..."
       [ -n "$compose_bak" ] && [ -f "$compose_bak" ] && mv "$compose_bak" "$compose_file"
       if [ -n "$old_image_id" ]; then
-        local current_img_ref
-        current_img_ref="$(awk '/^[[:space:]]*image:[[:space:]]*/{print $2; exit}' "$compose_file" 2>/dev/null | tr -d '"' | tr -d "'" || true)"
+        local current_img_ref app_service="${PROJ_APP_SERVICE:-$PROJ_ID}"
+        current_img_ref="$(awk -v svc="$app_service" '
+          $0 ~ "^[[:space:]]*" svc ":[[:space:]]*$" { in_svc=1 }
+          in_svc && /^[[:space:]]{0,2}[^[:space:]]/ && $0 !~ "^[[:space:]]*" svc ":[[:space:]]*$" { in_svc=0 }
+          in_svc && /^[[:space:]]*image:[[:space:]]*/ { print $2; exit }
+        ' "$compose_file" 2>/dev/null | tr -d '"' | tr -d "'" || true)"
         [ -z "$current_img_ref" ] && current_img_ref="${SAVED_IMAGE:-$PROJ_DEFAULT_IMAGE}"
         docker tag "$old_image_id" "$current_img_ref" 2>/dev/null || true
         if compose_cmd "$compose_file" up -d 2>/dev/null && \
@@ -397,7 +413,14 @@ base_project_uninstall() {
 
   if [ "$DRY_RUN" != "1" ]; then
     if [ -f "$compose_file" ]; then
-      compose_cmd "$compose_file" down 2>/dev/null || docker rm -f "$PROJ_CONTAINER_NAME" 2>/dev/null || true
+      # down 失败时只删应用容器会留下数据库容器，端口和容器名继续被占。
+      if ! compose_cmd "$compose_file" down 2>/dev/null; then
+        local cname
+        for cname in $(awk '/^[[:space:]]*container_name:[[:space:]]*/{print $2}' "$compose_file" 2>/dev/null); do
+          docker rm -f "$cname" 2>/dev/null || true
+        done
+        docker rm -f "$PROJ_CONTAINER_NAME" 2>/dev/null || true
+      fi
     else
       docker rm -f "$PROJ_CONTAINER_NAME" 2>/dev/null || true
     fi

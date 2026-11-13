@@ -423,14 +423,20 @@ verify_https_certificate() {
   fi
 
   log_info "正在自动向 Let's Encrypt 申请并验证 [${domain}] 的 HTTPS 证书（约需 5-15 秒）..."
-  local i=0 code="000"
+  local i=0 code="000" _code_tmp
+  _code_tmp="$(mktemp)"
   while [ "$i" -lt 18 ]; do
     # 优先走本地 127.0.0.1 SNI 探测，避免云厂商不支持 NAT 回环导致误判
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 --resolve "${domain}:443:127.0.0.1" "https://${domain}/" 2>/dev/null || echo '000')"
-    if [ "$code" = "000" ]; then
-      code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "https://${domain}/" 2>/dev/null || echo '000')"
-    fi
+    # curl 失败时 -w 输出的是 000000。只看退出码，避免把失败当成证书已签发。
+    code="000"
+    curl -s -o /dev/null -w '%{http_code}' --max-time 4 --resolve "${domain}:443:127.0.0.1" "https://${domain}/" >"${_code_tmp}" 2>/dev/null \
+      || curl -s -o /dev/null -w '%{http_code}' --max-time 4 "https://${domain}/" >"${_code_tmp}" 2>/dev/null \
+      || true
+    code="$(tr -cd '0-9' < "${_code_tmp}" 2>/dev/null || true)"
+    code="${code:0:3}"
+    [ -n "$code" ] || code="000"
     if [ "$code" != "000" ]; then
+      rm -f "$_code_tmp"
       log_ok "HTTPS 证书签发成功！访问 https://${domain} 返回状态码: ${code}（证书将自动续期）"
       return 0
     fi
@@ -438,6 +444,7 @@ verify_https_certificate() {
     i=$((i + 3))
   done
 
+  rm -f "$_code_tmp"
   printf '\n' >&2
   log_warn "暂时未能通过 https://${domain} 完成 TLS 握手（可能证书仍在后台签发，或遇到网络/解析拦截）。"
   printf '  %b请按以下顺序快速排查：%b\n' "$C_BOLD" "$C_RESET" >&2

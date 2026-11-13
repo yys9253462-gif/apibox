@@ -437,6 +437,143 @@ else
 fi
 rm -rf "$tmp_compose_dir"
 
+# 26. 服务探活不能把 curl 连不上时输出的 000000 当成已就绪
+if (
+  source "${ROOT_DIR}/lib/common.sh"
+  source "${ROOT_DIR}/lib/docker.sh"
+  DRY_RUN=0
+  ! wait_container_ready "definitely-missing-container" "1" "1"
+); then
+  ok "wait_container_ready 在连接失败时返回未就绪，而不是把 000000 当成成功"
+else
+  fail "wait_container_ready 把连接失败误判成服务已就绪"
+fi
+
+# 27. 命令行安装路径会先识别系统，包管理器不会是空的
+if (
+  source "${ROOT_DIR}/lib/common.sh"
+  source "${ROOT_DIR}/lib/system.sh"
+  source "${ROOT_DIR}/lib/project_base.sh"
+  SYS_PKG_MGR=""
+  detect_system_info
+  [ -n "$SYS_PKG_MGR" ]
+) && grep -q 'detect_system_info' "${ROOT_DIR}/lib/project_base.sh"; then
+  ok "detect_system_info 会写入包管理器，且安装流程会调用它"
+else
+  fail "安装流程未识别系统，SYS_PKG_MGR 仍为空"
+fi
+
+# 28. 升级只替换应用服务的镜像，数据库镜像保持不动
+tmp_up_compose="$(mktemp)"
+cat > "$tmp_up_compose" <<'EOF'
+services:
+  sub2api:
+    image: weishaw/sub2api:old
+  postgres:
+    image: postgres:18-alpine
+  redis:
+    image: redis:8-alpine
+EOF
+awk -v img='weishaw/sub2api:new' -v svc='sub2api' '
+  $0 ~ "^[[:space:]]*" svc ":[[:space:]]*$" { in_svc=1 }
+  in_svc && /^[[:space:]]{0,2}[^[:space:]]/ && $0 !~ "^[[:space:]]*" svc ":[[:space:]]*$" { in_svc=0 }
+  in_svc && !done && /^[[:space:]]*image:[[:space:]]*/ {
+    match($0, /^[[:space:]]*/)
+    print substr($0, 1, RLENGTH) "image: " img
+    done=1
+    next
+  }
+  { print }
+' "$tmp_up_compose" > "${tmp_up_compose}.out"
+if grep -qx '    image: weishaw/sub2api:new' "${tmp_up_compose}.out" \
+   && grep -qx '    image: postgres:18-alpine' "${tmp_up_compose}.out" \
+   && grep -qx '    image: redis:8-alpine' "${tmp_up_compose}.out"; then
+  ok "升级镜像替换只命中应用服务，postgres 与 redis 镜像不变"
+else
+  fail "升级镜像替换误改了数据库镜像"
+fi
+rm -f "$tmp_up_compose" "${tmp_up_compose}.out"
+
+# 29. postgres 数据目录按官方镜像用户 999 授权，不再写成 70
+if grep -q 'chown 999:999 "${app_dir}/postgres"' "${ROOT_DIR}/projects/sub2api.sh" \
+   && ! grep -q 'chown 70:70' "${ROOT_DIR}/projects/sub2api.sh"; then
+  ok "sub2api 数据目录按 postgres 官方镜像用户 999 授权"
+else
+  fail "sub2api 仍把 postgres 数据目录授权给错误的用户 70"
+fi
+
+# 30. 编排占位符按字面替换，镜像名里的 & 不会被当成替换表达式
+tmp_literal="$(mktemp -d)"
+if (
+  source "${ROOT_DIR}/lib/common.sh"
+  source "${ROOT_DIR}/projects/sub2api.sh"
+  DRY_RUN=0
+  PROXY_NET_NAME="vps_proxy_net"
+  project_write_compose "$tmp_literal" "18088" "registry.example.com/app:v1&build"
+  grep -Fq 'image: registry.example.com/app:v1&build' "${tmp_literal}/docker-compose.yml" \
+    && ! grep -q '__APIBOX_' "${tmp_literal}/docker-compose.yml"
+); then
+  ok "compose 占位符按字面替换，镜像名中的 & 原样保留"
+else
+  fail "compose 占位符替换把 & 当成了正则替换"
+fi
+rm -rf "$tmp_literal"
+
+# 31. 首次生成的管理员邮箱留空，不使用证书邮箱或固定的 admin@localhost
+tmp_admin="$(mktemp -d)"
+if (
+  source "${ROOT_DIR}/lib/common.sh"
+  source "${ROOT_DIR}/projects/sub2api.sh"
+  DRY_RUN=0
+  CLI_EMAIL="certs@example.com"
+  SAVED_EMAIL="certs@example.com"
+  project_write_env "$tmp_admin" "8080"
+  grep -qx 'ADMIN_EMAIL=' "${tmp_admin}/.env"
+); then
+  ok "sub2api 管理员邮箱留空，不复用证书邮箱"
+else
+  fail "sub2api 把证书邮箱或固定邮箱写成了管理员登录名"
+fi
+rm -rf "$tmp_admin"
+
+# 32. 配置值里的 # 与反斜杠会被拒绝，避免读回时被截断
+if (
+  source "${ROOT_DIR}/lib/common.sh"
+  DRY_RUN=0
+  tmp_conf="$(mktemp)"
+  ! save_conf_kv "$tmp_conf" "SAVED_DOMAIN" "bad#value"
+  ! save_conf_kv "$tmp_conf" "SAVED_DOMAIN" 'bad\value'
+  rm -f "$tmp_conf"
+); then
+  ok "save_conf_kv 拒绝包含 # 或反斜杠的配置值"
+else
+  fail "save_conf_kv 接受了会被读回逻辑截断的配置值"
+fi
+
+# 33. 自举更新用 cp -R，避免 cp -a 把 root 属主带进已有目录
+if grep -q 'cp -R "${top_dir}/." "${APIBOX_HOME}/"' "${ROOT_DIR}/install.sh" \
+   && ! grep -q 'cp -a "${top_dir}/."' "${ROOT_DIR}/install.sh"; then
+  ok "自举更新使用 cp -R，不再保留压缩包里的 root 属主"
+else
+  fail "自举更新仍使用 cp -a"
+fi
+
+# 34. 卸载在 compose down 失败时会删掉编排里的每一个容器
+if grep -q 'container_name:' "${ROOT_DIR}/lib/project_base.sh" \
+   && grep -A 8 'compose_cmd "$compose_file" down' "${ROOT_DIR}/lib/project_base.sh" | grep -q 'for cname in'; then
+  ok "卸载失败回退会清理编排中的全部容器，不只是应用容器"
+else
+  fail "卸载失败回退仍只删除应用容器"
+fi
+
+# 35. 证书探测按 curl 退出码判断，不把失败输出 000000 当成签发成功
+if grep -q 'code="${code:0:3}"' "${ROOT_DIR}/lib/ssl.sh" \
+   && ! grep -q "|| echo '000'" "${ROOT_DIR}/lib/ssl.sh"; then
+  ok "HTTPS 证书探测按退出码判断，不再把 curl 失败输出当成成功"
+else
+  fail "HTTPS 证书探测仍把 curl 失败输出当成成功"
+fi
+
 echo "------------------------------------------------------------"
 printf "测试汇总：通过 %d 项，失败 %d 项\n" "$PASS_COUNT" "$FAIL_COUNT"
 [ "$FAIL_COUNT" -eq 0 ]
