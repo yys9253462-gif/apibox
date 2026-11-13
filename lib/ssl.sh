@@ -129,7 +129,8 @@ detect_proxy_mode() {
 check_caddy_domain_conflict() {
   local cfg_file="$1"
   local project_id="$2"
-  local domain="$3"
+  local domain
+  domain="$(normalize_domain "$3")"
   [ -f "$cfg_file" ] || return 0
 
   local start_mark="# >>> vps-proxy:${project_id} >>>"
@@ -139,8 +140,17 @@ check_caddy_domain_conflict() {
     $0 == s { skip=1; next }
     $0 == e { skip=0; next }
     skip { next }
-    /^[[:space:]]*#/ { next }
-    $1 == d && $2 == "{" { print $0; exit }
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    index($0, "{") > 0 {
+      hdr = tolower($0)
+      sub(/\{.*/, "", hdr)
+      gsub(/,/, " ", hdr)
+      n = split(hdr, arr, /[[:space:]]+/)
+      for (i = 1; i <= n; i++) {
+        sub(/:[0-9]+$/, "", arr[i])
+        if (arr[i] == d) { print $0; exit }
+      }
+    }
   ' "$cfg_file")"
 
   if [ -n "$hit" ]; then
@@ -427,7 +437,7 @@ verify_https_certificate() {
   printf '    3) 若使用 Cloudflare 代理：请将 SSL/TLS 模式设为「完全（Full）」，勿选「灵活（Flexible）」；\n' >&2
   printf '    4) 同一域名每周向 Let'\''s Encrypt 申请证书有 5 次频率限制，超限需等待或换子域名。\n\n' >&2
   printf '  您可以复制以下命令查看证书申请实时日志：\n' >&2
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CADDY_CONTAINER_NAME"; then
+  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$CADDY_CONTAINER_NAME"; then
     printf '  %bdocker logs --tail 50 %s%b\n' "$C_GREEN" "$CADDY_CONTAINER_NAME" "$C_RESET" >&2
   else
     printf '  %bjournalctl -u caddy -n 50 --no-pager%b\n' "$C_GREEN" "$C_RESET" >&2

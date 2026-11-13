@@ -221,6 +221,10 @@ pause_enter() {
 save_conf_kv() {
   local conf_file="$1"
   shift
+  if [ "$(( $# % 2 ))" -ne 0 ]; then
+    log_err "save_conf_kv 参数数量必须成对提供。"
+    return 1
+  fi
   if [ "$DRY_RUN" = "1" ]; then
     log_info "[演练模式] 将保存配置到 ${conf_file}"
     return 0
@@ -302,6 +306,9 @@ load_conf_safe() {
 # 生成高强度随机密钥（优先 openssl，退化 /dev/urandom）
 gen_secret() {
   local bytes="${1:-32}"
+  if [[ ! "$bytes" =~ ^[1-9][0-9]*$ ]]; then
+    bytes=32
+  fi
   if command -v openssl >/dev/null 2>&1; then
     openssl rand -hex "$bytes"
   else

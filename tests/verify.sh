@@ -296,6 +296,55 @@ else
   fail "全局互斥锁未按 UID 隔离"
 fi
 
+# 19. Caddy 域名冲突检测增强测试（无空格花括号、多域名逗号、大小写、带端口）
+tmp_caddy2="$(mktemp)"
+cat > "$tmp_caddy2" <<'EOF'
+Site1.Example.COM{
+    respond "ok"
+}
+a.example.com, b.example.com:443 {
+    respond "ok"
+}
+EOF
+if (
+  source "${ROOT_DIR}/lib/common.sh"
+  source "${ROOT_DIR}/lib/ssl.sh"
+  ! check_caddy_domain_conflict "$tmp_caddy2" "sub2api" "site1.example.com" 2>/dev/null &&
+  ! check_caddy_domain_conflict "$tmp_caddy2" "sub2api" "b.example.com" 2>/dev/null &&
+  check_caddy_domain_conflict "$tmp_caddy2" "sub2api" "c.example.com" 2>/dev/null
+); then
+  ok "Caddy 域名冲突检测覆盖无空格花括号、多域名逗号、大小写与端口格式"
+else
+  fail "Caddy 域名冲突检测在特殊语法格式下漏检"
+fi
+rm -f "$tmp_caddy2"
+
+# 20. save_conf_kv 奇数参数防御与 gen_secret 异常长度兜底测试
+if (
+  source "${ROOT_DIR}/lib/common.sh"
+  ! save_conf_kv "/tmp/unused_conf_test" "ONLY_KEY" 2>/dev/null &&
+  sec="$(gen_secret "invalid")" &&
+  [ "${#sec}" -eq 64 ]
+); then
+  ok "save_conf_kv 奇数参数拦截与 gen_secret 非法参数兜底通过"
+else
+  fail "save_conf_kv 或 gen_secret 参数边界保护失败"
+fi
+
+# 21. 演练模式下升级（--image）与非交互卸载路径检查
+tmp_up_dir="$(mktemp -d)"
+mkdir -p "${tmp_up_dir}/sub2api"
+touch "${tmp_up_dir}/sub2api/docker-compose.yml"
+if (
+  VPS_BASE_DIR="$tmp_up_dir" bash "${ROOT_DIR}/install.sh" --project sub2api --action upgrade --image weishaw/sub2api:v1.0.0 --dry-run >/dev/null 2>&1 &&
+  VPS_BASE_DIR="$tmp_up_dir" bash "${ROOT_DIR}/install.sh" --project sub2api --action uninstall --yes --dry-run >/dev/null 2>&1
+); then
+  ok "--action upgrade --image 与 --action uninstall --yes 演练路径均正常执行"
+else
+  fail "升级带 --image 或非交互卸载演练路径执行失败"
+fi
+rm -rf "$tmp_up_dir"
+
 echo "------------------------------------------------------------"
 printf "测试汇总：通过 %d 项，失败 %d 项\n" "$PASS_COUNT" "$FAIL_COUNT"
 [ "$FAIL_COUNT" -eq 0 ]

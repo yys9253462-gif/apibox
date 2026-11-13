@@ -278,7 +278,10 @@ load_projects_registry() {
       ""|\#*) continue ;;
     esac
     IFS='|' read -r id name desc port script_rel repo image <<< "$line"
-    [ -n "$id" ] && [ -n "$script_rel" ] || continue
+    if [ -z "$id" ] || [ -z "$script_rel" ] || ! is_valid_port "${port:-}" || [ -z "${image:-}" ]; then
+      log_warn "跳过格式不完整的注册表条目: ${line}"
+      continue
+    fi
     REG_IDS+=("$id")
     REG_NAMES+=("$name")
     REG_DESCS+=("$desc")
@@ -488,7 +491,10 @@ main() {
     load_project_module "$idx"
     local act="${CLI_ACTION:-install}"
     case "$act" in
-      install|restart|upgrade|uninstall) acquire_instance_lock ;;
+      install|restart|upgrade|uninstall)
+        ensure_root "$@"
+        acquire_instance_lock
+        ;;
     esac
     case "$act" in
       install)   project_install ;;

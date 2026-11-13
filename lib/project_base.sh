@@ -150,8 +150,13 @@ base_project_install() {
   # 第 4 步：生成配置并拉起容器
   log_step 4 5 "生成配置并拉取启动 ${PROJ_NAME} 容器"
   local image="${CLI_IMAGE:-${SAVED_IMAGE:-$PROJ_DEFAULT_IMAGE}}"
+  local compose_bak=""
   if [ "$DRY_RUN" != "1" ]; then
     mkdir -p "$app_dir"
+    if [ -f "$compose_file" ]; then
+      compose_bak="${compose_file}.bak.$$"
+      cp "$compose_file" "$compose_bak"
+    fi
   fi
   project_write_env "$app_dir" "$target_port"
   project_write_compose "$app_dir" "$target_port" "$image"
@@ -164,12 +169,15 @@ base_project_install() {
     fi
     if ! out="$(compose_cmd "$compose_file" up -d 2>&1)"; then
       handle_container_failure "$PROJ_CONTAINER_NAME" "$compose_file" "$out"
+      [ -n "$compose_bak" ] && [ -f "$compose_bak" ] && mv "$compose_bak" "$compose_file"
       return 1
     fi
     if ! wait_container_ready "$PROJ_CONTAINER_NAME" "$target_port" 45; then
       handle_container_failure "$PROJ_CONTAINER_NAME" "$compose_file" "容器启动后端口探活超时"
+      [ -n "$compose_bak" ] && [ -f "$compose_bak" ] && mv "$compose_bak" "$compose_file"
       return 1
     fi
+    [ -n "$compose_bak" ] && rm -f "$compose_bak"
   else
     log_info "[演练模式] 将执行 docker compose pull && docker compose up -d"
   fi
@@ -235,13 +243,21 @@ base_project_status() {
   [ -n "$SAVED_DOMAIN" ] && printf '  %b绑定域名%b : https://%s\n' "$C_BOLD" "$C_RESET" "$SAVED_DOMAIN" >&2
   if command -v docker >/dev/null 2>&1; then
     printf '\n  %b容器状态:%b\n' "$C_BOLD" "$C_RESET" >&2
-    docker ps -a --filter "name=^/${PROJ_CONTAINER_NAME}$" \
-      --format "  名称: {{.Names}} | 状态: {{.Status}} | 镜像: {{.Image}}" >&2 || true
+    if docker info >/dev/null 2>&1; then
+      docker ps -a --filter "name=^/${PROJ_CONTAINER_NAME}$" \
+        --format "  名称: {{.Names}} | 状态: {{.Status}} | 镜像: {{.Image}}" >&2 || true
+    else
+      printf '  Docker 服务当前未运行。\n' >&2
+    fi
   fi
   print_hr
 }
 
 base_project_logs() {
+  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    log_warn "Docker 未安装或服务未运行，无法读取容器日志。"
+    return 1
+  fi
   if ! docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$PROJ_CONTAINER_NAME"; then
     log_warn "未找到容器 ${PROJ_CONTAINER_NAME}，可能尚未安装。"
     return 1
@@ -257,6 +273,7 @@ base_project_restart() {
   compose_file="$(base_compose_file)"
   [ -f "$compose_file" ] || { log_warn "尚未安装 ${PROJ_NAME}。"; return 1; }
   log_info "正在重启 ${PROJ_NAME}..."
+  ensure_proxy_network "$PROXY_NET_NAME" || return 1
   run_cmd compose_cmd "$compose_file" restart
   log_ok "${PROJ_NAME} 已重启。"
 }
@@ -269,16 +286,31 @@ base_project_upgrade() {
   [ -f "$compose_file" ] || { log_warn "尚未安装 ${PROJ_NAME}。"; return 1; }
   log_info "正在拉取最新镜像并滚动重建 ${PROJ_NAME}（原有数据不会丢失，失败将自动回滚）..."
   if [ "$DRY_RUN" != "1" ]; then
-    local old_image_id=""
+    ensure_proxy_network "$PROXY_NET_NAME" || return 1
+    local old_image_id="" compose_bak="" target_image=""
     if docker info >/dev/null 2>&1; then
       old_image_id="$(docker inspect -f '{{.Image}}' "$PROJ_CONTAINER_NAME" 2>/dev/null || true)"
     fi
+    if [ -n "${CLI_IMAGE:-}" ]; then
+      target_image="$CLI_IMAGE"
+      compose_bak="${compose_file}.upgrade.bak.$$"
+      cp "$compose_file" "$compose_bak"
+      local tmp_c="${compose_file}.tmp.$$"
+      awk -v img="$target_image" '
+        !done && /^[[:space:]]*image:[[:space:]]*/ {
+          sub(/image:.*/, "image: " img); done=1
+        }
+        { print }
+      ' "$compose_file" > "$tmp_c" && mv "$tmp_c" "$compose_file" || { rm -f "$tmp_c" "$compose_bak"; return 1; }
+    fi
     if ! compose_cmd "$compose_file" pull; then
       log_err "拉取新镜像失败，已保留原运行容器未做改动。"
+      [ -n "$compose_bak" ] && [ -f "$compose_bak" ] && mv "$compose_bak" "$compose_file"
       return 1
     fi
     if ! compose_cmd "$compose_file" up -d || ! wait_container_ready "$PROJ_CONTAINER_NAME" "${SAVED_PORT:-$PROJ_DEFAULT_HOST_PORT}" 45; then
       log_err "新版本启动或探活失败！正在尝试自动回滚到升级前版本..."
+      [ -n "$compose_bak" ] && [ -f "$compose_bak" ] && mv "$compose_bak" "$compose_file"
       if [ -n "$old_image_id" ]; then
         local current_img_ref
         current_img_ref="$(awk '/^[[:space:]]*image:[[:space:]]*/{print $2; exit}' "$compose_file" 2>/dev/null | tr -d '"' | tr -d "'" || true)"
@@ -293,8 +325,16 @@ base_project_upgrade() {
       fi
       return 1
     fi
+    [ -n "$compose_bak" ] && rm -f "$compose_bak"
+    if [ -n "$target_image" ] && [ -f "$(base_conf_file)" ]; then
+      save_conf_kv "$(base_conf_file)" \
+        "SAVED_PORT" "${SAVED_PORT:-$PROJ_DEFAULT_HOST_PORT}" \
+        "SAVED_DOMAIN" "${SAVED_DOMAIN:-}" \
+        "SAVED_EMAIL" "${SAVED_EMAIL:-}" \
+        "SAVED_IMAGE" "$target_image"
+    fi
   else
-    log_info "[演练模式] 将拉取最新镜像并执行带健康门禁的升级"
+    log_info "[演练模式] 将拉取镜像 ${CLI_IMAGE:-${SAVED_IMAGE:-$PROJ_DEFAULT_IMAGE}} 并执行带健康门禁的升级"
   fi
   log_ok "${PROJ_NAME} 更新完成。"
 }
@@ -310,7 +350,9 @@ base_project_uninstall() {
     return 0
   fi
 
-  if ! ask_yn "确认停止并卸载 ${PROJ_NAME} 容器及反代配置吗？" "n"; then
+  local confirm_def="n"
+  [ "$ASSUME_YES" = "1" ] && [ "${CLI_ACTION:-}" = "uninstall" ] && confirm_def="y"
+  if ! ask_yn "确认停止并卸载 ${PROJ_NAME} 容器及反代配置吗？" "$confirm_def"; then
     log_info "已取消卸载。"
     return 0
   fi

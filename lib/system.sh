@@ -125,16 +125,20 @@ ensure_base_deps() {
     apt)
       export DEBIAN_FRONTEND=noninteractive
       run_cmd apt-get update -qq || log_warn "部分软件源索引更新失败，尝试继续安装基础工具..."
-      run_cmd apt-get install -y -qq curl ca-certificates openssl tar iproute2 dnsutils
+      run_cmd apt-get install -y -qq curl ca-certificates openssl tar iproute2
+      run_cmd apt-get install -y -qq dnsutils >/dev/null 2>&1 || true
       ;;
     dnf)
-      run_cmd dnf install -y -q curl ca-certificates openssl tar iproute bind-utils
+      run_cmd dnf install -y -q curl ca-certificates openssl tar iproute
+      run_cmd dnf install -y -q bind-utils >/dev/null 2>&1 || true
       ;;
     yum)
-      run_cmd yum install -y -q curl ca-certificates openssl tar iproute bind-utils
+      run_cmd yum install -y -q curl ca-certificates openssl tar iproute
+      run_cmd yum install -y -q bind-utils >/dev/null 2>&1 || true
       ;;
     apk)
-      run_cmd apk add --no-cache curl ca-certificates openssl tar iproute2 bind-tools bash
+      run_cmd apk add --no-cache curl ca-certificates openssl tar iproute2 bash
+      run_cmd apk add --no-cache bind-tools >/dev/null 2>&1 || true
       ;;
     *)
       log_warn "未识别的包管理器，请手动安装: curl openssl tar iproute2"
