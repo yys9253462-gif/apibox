@@ -68,7 +68,9 @@ detect_system_info() {
 
   if command -v df >/dev/null 2>&1; then
     SYS_DISK_AVAIL="$(df -Pk / 2>/dev/null | awk 'END{if (NF>=4 && $4 ~ /^[0-9]+$/) printf "%.1f GB", $4/1024/1024}' || true)"
-    [ -z "$SYS_DISK_AVAIL" ] && SYS_DISK_AVAIL="未知"
+    if [ -z "$SYS_DISK_AVAIL" ]; then
+      SYS_DISK_AVAIL="未知"
+    fi
   fi
 }
 

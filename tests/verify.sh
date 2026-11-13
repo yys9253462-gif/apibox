@@ -277,13 +277,13 @@ else
   fail "跨项目切换未清理 project_post_install_tips 钩子"
 fi
 
-# 17. POSIX df -Pk 磁盘信息探测兼容性测试
-if (
-  source "${ROOT_DIR}/lib/common.sh"
-  source "${ROOT_DIR}/lib/system.sh"
+# 17. POSIX df -Pk 磁盘信息探测兼容性测试（独立严格模式进程，确保函数返回 0）
+if bash -euo pipefail -c "
+  source '${ROOT_DIR}/lib/common.sh'
+  source '${ROOT_DIR}/lib/system.sh'
   detect_system_info
-  [[ "$SYS_DISK_AVAIL" =~ ^[0-9]+(\.[0-9]+)?\ GB$ ]] || [ "$SYS_DISK_AVAIL" = "未知" ]
-); then
+  [[ \"\$SYS_DISK_AVAIL\" =~ ^[0-9]+(\\.[0-9]+)?\\ GB\$ ]] || [ \"\$SYS_DISK_AVAIL\" = '未知' ]
+"; then
   ok "detect_system_info 磁盘空间探测格式规范（POSIX df -Pk）"
 else
   fail "detect_system_info 磁盘空间解析格式异常: ${SYS_DISK_AVAIL:-空}"
